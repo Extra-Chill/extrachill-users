@@ -287,8 +287,8 @@ function ec_users_get_user_events( int $user_id, array $args = array() ): array 
 		$args['order'] = 'DESC';
 	}
 
-	$table          = extrachill_users_concert_tracking_table_name();
-	$blog_id        = $args['blog_id'] ? $args['blog_id'] : ( function_exists( 'ec_get_blog_id' ) ? ec_get_blog_id( 'events' ) : 7 );
+	$table         = extrachill_users_concert_tracking_table_name();
+	$blog_id       = $args['blog_id'] ? $args['blog_id'] : ( function_exists( 'ec_get_blog_id' ) ? ec_get_blog_id( 'events' ) : 7 );
 	$events_prefix = $wpdb->get_blog_prefix( $blog_id );
 
 	// Build WHERE clauses.
@@ -368,9 +368,9 @@ function ec_users_get_user_events( int $user_id, array $args = array() ): array 
 	}
 
 	// Enrich with event details (switch to events blog for taxonomy queries).
-	$shows          = array();
-	$switched       = false;
-	$current_blog   = get_current_blog_id();
+	$shows        = array();
+	$switched     = false;
+	$current_blog = get_current_blog_id();
 
 	if ( $current_blog !== $blog_id ) {
 		switch_to_blog( $blog_id );
@@ -415,7 +415,7 @@ function ec_users_build_show_data( WP_Post $post, array $row ): array {
 	$event_id = $post->ID;
 
 	// Venue (first term).
-	$venue      = null;
+	$venue       = null;
 	$venue_terms = wp_get_post_terms( $event_id, 'venue', array( 'number' => 1 ) );
 	if ( ! is_wp_error( $venue_terms ) && ! empty( $venue_terms ) ) {
 		$venue = array(
@@ -429,15 +429,15 @@ function ec_users_build_show_data( WP_Post $post, array $row ): array {
 	$location_terms = wp_get_post_terms( $event_id, 'location' );
 	if ( ! is_wp_error( $location_terms ) && ! empty( $location_terms ) ) {
 		// Use the deepest (most specific) location term.
-		$deepest = null;
+		$deepest   = null;
 		$max_depth = -1;
 		foreach ( $location_terms as $term ) {
-			$depth = 0;
+			$depth  = 0;
 			$parent = $term->parent;
 			while ( $parent ) {
 				++$depth;
 				$parent_term = get_term( $parent, 'location' );
-				$parent = $parent_term && ! is_wp_error( $parent_term ) ? $parent_term->parent : 0;
+				$parent      = $parent_term && ! is_wp_error( $parent_term ) ? $parent_term->parent : 0;
 			}
 			if ( $depth > $max_depth ) {
 				$max_depth = $depth;
@@ -728,9 +728,9 @@ function ec_users_get_user_concert_stats( int $user_id, array $args = array() ):
 	}
 
 	// Cast counts to int in top arrays.
-	$cast_counts = function( $items ) {
+	$cast_counts = function ( $items ) {
 		return array_map(
-			function( $item ) {
+			function ( $item ) {
 				$item['count'] = (int) $item['count'];
 				return $item;
 			},
