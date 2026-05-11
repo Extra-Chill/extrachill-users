@@ -1,10 +1,19 @@
+/**
+ * WordPress dependencies
+ */
 import { registerBlockType } from '@wordpress/blocks';
 import { useBlockProps } from '@wordpress/block-editor';
+/**
+ * External dependencies
+ */
 import '@extrachill/components/styles/components.scss';
+/**
+ * Internal dependencies
+ */
 import './editor.css';
 
 registerBlockType( 'extrachill/login-register', {
-	edit: function( { attributes, setAttributes } ) {
+	edit( { attributes, setAttributes } ) {
 		const blockProps = useBlockProps();
 		const { redirectUrl } = attributes;
 

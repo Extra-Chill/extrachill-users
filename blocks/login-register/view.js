@@ -1,3 +1,6 @@
+/**
+ * External dependencies
+ */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BlockShell, BlockShellHeader, BlockShellInner, Panel, ResponsiveTabs } from '@extrachill/components';

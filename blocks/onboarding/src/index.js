@@ -1,8 +1,11 @@
+/**
+ * WordPress dependencies
+ */
 import { registerBlockType } from '@wordpress/blocks';
 import { useBlockProps } from '@wordpress/block-editor';
 
 registerBlockType( 'extrachill/onboarding', {
-	edit: function() {
+	edit() {
 		const blockProps = useBlockProps();
 
 		return (
