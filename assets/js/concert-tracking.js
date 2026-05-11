@@ -14,15 +14,7 @@
 ( function () {
 	'use strict';
 
-	/**
-	 * Toggle button between marked (button-2) and unmarked (button-3) states.
-	 * @param button
-	 * @param container
-	 * @param marked
-	 * @param labelEl
-	 * @param labelDefault
-	 * @param labelActive
-	 */
+	// Toggle button between marked (button-2) and unmarked (button-3) states.
 	function setButtonState( button, container, marked, labelEl, labelDefault, labelActive ) {
 		if ( marked ) {
 			container.classList.add( 'ec-attendance--marked' );

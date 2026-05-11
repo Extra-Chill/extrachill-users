@@ -4,6 +4,7 @@
  * Integrates Google Identity Services (GIS) library for authentication.
  * Uses ECAuthUtils for shared functionality.
  */
+/* global google */
 (function () {
     'use strict';
 
@@ -174,7 +175,7 @@
     /**
      * Check if current page is from /join flow.
      *
-     * @return {boolean}
+     * @return {boolean} True when the current URL carries from_join=true.
      */
     function isFromJoinFlow() {
         try {

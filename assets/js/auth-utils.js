@@ -50,7 +50,10 @@
         const bytes = new Uint8Array(16);
         window.crypto.getRandomValues(bytes);
 
+        // Set RFC 4122 version (4) and variant (10xx) bits — bitwise required by spec.
+        // eslint-disable-next-line no-bitwise
         bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        // eslint-disable-next-line no-bitwise
         bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
         const hex = Array.from(bytes, function (b) {
