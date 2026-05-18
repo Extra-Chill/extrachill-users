@@ -132,7 +132,7 @@ function extrachill_users_register_artist_access_abilities() {
  * @param array $input Unused.
  * @return array Array with 'requests' key containing pending request data.
  */
-function extrachill_users_ability_list_artist_access_requests( $input ) {
+function extrachill_users_ability_list_artist_access_requests() {
 	$user_query = new WP_User_Query(
 		array(
 			'blog_id'  => 0,
@@ -351,7 +351,7 @@ function extrachill_users_send_artist_access_request_email( $user_id, $user, $ac
 		$user->display_name
 	);
 
-	$body_html  = '<p>' . sprintf(
+	$body_html = '<p>' . sprintf(
 		/* translators: 1: user display name, 2: user email, 3: request type label */
 		esc_html__( '%1$s (%2$s) has requested artist platform access.', 'extrachill-users' ),
 		esc_html( $user->display_name ),
@@ -395,7 +395,7 @@ function extrachill_users_send_artist_access_approval_email( $user, $type ) {
 
 	$subject = 'Your Extra Chill Artist Platform Access Has Been Approved';
 
-	$body_html  = '<p>' . sprintf(
+	$body_html = '<p>' . sprintf(
 		/* translators: %s: access type label */
 		esc_html__( 'Your request for %s access on Extra Chill has been approved!', 'extrachill-users' ),
 		esc_html( $type_label )

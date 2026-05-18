@@ -22,8 +22,8 @@ function extrachill_notify_admin_new_user( $user_id, $registration_page, $regist
 	if ( ! $user_data instanceof WP_User ) {
 		return;
 	}
-	$username  = $user_data->user_login;
-	$email     = $user_data->user_email;
+	$username = $user_data->user_login;
+	$email    = $user_data->user_email;
 
 	$admin_email = get_option( 'admin_email' );
 	$subject     = 'New User Registration Notification';
