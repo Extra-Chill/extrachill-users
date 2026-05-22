@@ -238,7 +238,14 @@ function ec_users_sync_team_role( $user_id ) {
 		try {
 			switch_to_blog( $blog_id );
 
-			// Ensure the role itself exists on this site before we try to add it.
+			// Ensure the role exists on this site before we assign it.
+			// WP_User::add_role() writes the role name into user meta
+			// without checking whether the role is registered — so
+			// without this call, a sync against a fresh subsite that
+			// hasn't run init yet would create a "ghost role" (role on
+			// the user, but get_role() returns null, so the role's
+			// caps don't take effect). The call is cheap: a single
+			// get_role() lookup + array compare on the steady state.
 			ec_users_register_team_role();
 
 			$user = new WP_User( $user_id );
@@ -281,10 +288,12 @@ function ec_users_on_team_meta_change( $meta_id, $user_id, $meta_key, $meta_valu
 		return;
 	}
 
-	// Guard against infinite recursion: sync writes to user roles via
-	// WP_User::add_role(), which internally updates _capabilities meta —
-	// not our keys — but we filter on meta_key above anyway so we are
-	// safe. Defensive: never recurse on our own hook.
+	// Defensive recursion guard. sync writes role assignments via
+	// update_user_meta on the {prefix}_capabilities key, which is
+	// filtered out by the in_array check above — so direct recursion
+	// is impossible. This guards against indirect recursion if any
+	// future code writes back to extrachill_team* meta from inside
+	// updated_user_meta on the same user.
 	static $syncing = array();
 	if ( ! empty( $syncing[ $user_id ] ) ) {
 		return;
@@ -318,22 +327,22 @@ function ec_users_on_new_site_register_role( $new_site ) {
 add_action( 'wp_initialize_site', 'ec_users_on_new_site_register_role', 200 );
 
 /**
- * Idempotent safety net: ensure the role exists on the current site.
+ * Idempotent safety net: ensure the role exists on the current site
+ * with the current cap set.
  *
- * Runs once per site via a site_option flag so we don't pay the cost on
- * every request. Catches sites that were created before this code
- * shipped, or sites where the activation-time network loop missed for
- * whatever reason.
+ * Runs early on every request via init. ec_users_register_team_role()
+ * self-debounces — it does a cheap get_role() + ksort()+!== compare
+ * against the desired cap set and only writes when those diverge, so
+ * the steady-state cost is a single get_role() call per request.
+ *
+ * The previous version-flag based gate (skip if option matches plugin
+ * version) was wrong because patch-level deploys that change the cap
+ * set without bumping the version would never propagate. The cap-diff
+ * check IS the debounce.
  *
  * @return void
  */
 function ec_users_maybe_register_team_role() {
-	$key = 'extrachill_users_team_role_registered';
-	if ( get_option( $key ) === EXTRACHILL_USERS_VERSION ) {
-		return;
-	}
-
 	ec_users_register_team_role();
-	update_option( $key, EXTRACHILL_USERS_VERSION );
 }
 add_action( 'init', 'ec_users_maybe_register_team_role', 5 );

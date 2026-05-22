@@ -13,6 +13,16 @@ class Test_Team_Role extends WP_UnitTestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		require_once dirname( __DIR__, 2 ) . '/inc/team-members/role.php';
+
+		// Ensure each test starts with the role NOT registered so tests
+		// that verify registration are observing a real transition,
+		// not stale state from a previous test in the run.
+		remove_role( EC_USERS_TEAM_ROLE );
+	}
+
+	protected function tearDown(): void {
+		remove_role( EC_USERS_TEAM_ROLE );
+		parent::tearDown();
 	}
 
 	public function test_role_caps_grant_upload_files(): void {
@@ -99,9 +109,6 @@ class Test_Team_Role extends WP_UnitTestCase {
 	}
 
 	public function test_register_team_role_creates_role_with_expected_caps(): void {
-		// Make sure we start clean for this test.
-		remove_role( EC_USERS_TEAM_ROLE );
-
 		ec_users_register_team_role();
 
 		$role = get_role( EC_USERS_TEAM_ROLE );
@@ -112,8 +119,6 @@ class Test_Team_Role extends WP_UnitTestCase {
 	}
 
 	public function test_register_team_role_idempotent(): void {
-		remove_role( EC_USERS_TEAM_ROLE );
-
 		ec_users_register_team_role();
 		ec_users_register_team_role();
 		ec_users_register_team_role();
@@ -123,10 +128,23 @@ class Test_Team_Role extends WP_UnitTestCase {
 		$this->assertTrue( $role->has_cap( 'upload_files' ) );
 	}
 
+	public function test_register_team_role_picks_up_cap_drift(): void {
+		// Simulate a stale registration with the wrong cap set.
+		add_role( EC_USERS_TEAM_ROLE, 'Stale Team', array( 'read' => true ) );
+
+		$stale = get_role( EC_USERS_TEAM_ROLE );
+		$this->assertFalse( $stale->has_cap( 'upload_files' ) );
+
+		ec_users_register_team_role();
+
+		$fresh = get_role( EC_USERS_TEAM_ROLE );
+		$this->assertTrue( $fresh->has_cap( 'upload_files' ) );
+		$this->assertTrue( $fresh->has_cap( 'access_studio' ) );
+	}
+
 	public function test_is_team_member_with_cap_returns_true(): void {
 		require_once dirname( __DIR__, 2 ) . '/inc/team-members.php';
 
-		remove_role( EC_USERS_TEAM_ROLE );
 		ec_users_register_team_role();
 
 		$user_id = self::factory()->user->create();
