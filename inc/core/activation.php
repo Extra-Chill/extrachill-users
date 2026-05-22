@@ -34,6 +34,10 @@ function extrachill_users_run_activation() {
 
 	extrachill_users_create_login_pages_network();
 
+	// Register extra_chill_team role on every site in the network (#45 Phase 1).
+	require_once EXTRACHILL_USERS_PLUGIN_DIR . 'inc/team-members/role.php';
+	ec_users_register_team_role_network_wide();
+
 	if ( ! wp_next_scheduled( 'extrachill_welcome_email_fallback' ) ) {
 		wp_schedule_event( time(), 'hourly', 'extrachill_welcome_email_fallback' );
 	}
