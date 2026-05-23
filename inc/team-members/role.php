@@ -311,6 +311,33 @@ add_action( 'updated_user_meta', 'ec_users_on_team_meta_change', 10, 4 );
 add_action( 'deleted_user_meta', 'ec_users_on_team_meta_change', 10, 4 );
 
 /**
+ * Re-sync the team role after a user profile is saved via wp-admin.
+ *
+ * The wp-admin user-edit page uses a single-role dropdown — saving it
+ * calls WP_User::set_role() which REPLACES the user's roles rather
+ * than adding to them. For team members with the extra_chill_team
+ * role layered on top of their primary role (e.g. subscriber +
+ * extra_chill_team), this silently strips the team role on save.
+ *
+ * The underlying source-of-truth meta (extrachill_team /
+ * extrachill_team_manual_override) is unchanged by the profile
+ * save, so we re-sync after every profile_update to restore the
+ * role from meta. Idempotent: no-op for non-team users.
+ *
+ * @param int $user_id User ID of the profile that was updated.
+ * @return void
+ */
+function ec_users_on_profile_update_resync( $user_id ) {
+	$user_id = (int) $user_id;
+	if ( $user_id <= 0 ) {
+		return;
+	}
+
+	ec_users_sync_team_role( $user_id );
+}
+add_action( 'profile_update', 'ec_users_on_profile_update_resync', 20, 1 );
+
+/**
  * Register the role on a newly-initialized subsite.
  *
  * @param WP_Site $new_site The newly created site object.

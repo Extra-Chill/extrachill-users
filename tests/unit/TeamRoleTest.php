@@ -179,4 +179,51 @@ class Test_Team_Role extends WP_UnitTestCase {
 		wp_set_current_user( 0 );
 		$this->assertFalse( ec_is_team_member() );
 	}
+
+	/**
+	 * Simulates the wp-admin user-edit foot-gun: saving the profile via
+	 * the single-role dropdown drops the layered extra_chill_team role.
+	 * The profile_update hook should re-sync from meta and restore it.
+	 *
+	 * Note: ec_users_sync_team_role does network-wide switch_to_blog
+	 * iteration. In a single-site unit test we can't observe the full
+	 * network behavior, but we CAN observe that the role is restored
+	 * on the current site, which is the most-likely real-world site
+	 * for the wp-admin edit to have occurred on.
+	 */
+	public function test_profile_update_resyncs_team_role(): void {
+		ec_users_register_team_role();
+
+		$user_id = self::factory()->user->create();
+		update_user_meta( $user_id, 'extrachill_team', '1' );
+
+		// Verify the meta-change hook granted the role.
+		$user = new WP_User( $user_id );
+		$this->assertTrue(
+			in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ),
+			'Meta-change hook should have granted the role.'
+		);
+
+		// Simulate the wp-admin profile save: single-role replacement
+		// strips the extra_chill_team role.
+		$user->set_role( 'subscriber' );
+		$user = new WP_User( $user_id );
+		$this->assertFalse(
+			in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ),
+			'set_role() should have stripped the team role.'
+		);
+
+		// Fire profile_update — our hook should re-sync from meta.
+		do_action( 'profile_update', $user_id );
+
+		$user = new WP_User( $user_id );
+		$this->assertTrue(
+			in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ),
+			'profile_update hook should have restored the team role from meta.'
+		);
+		$this->assertTrue(
+			in_array( 'subscriber', (array) $user->roles, true ),
+			'subscriber role should be preserved.'
+		);
+	}
 }
