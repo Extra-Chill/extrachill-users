@@ -1,38 +1,32 @@
 <?php
 /**
- * Team Member WP Role + Capability Sync
+ * Team Member WP Role
  *
  * Phase 1 of Extra-Chill/extrachill-users#45.
  *
- * Maintains a first-class `extra_chill_team` WP role on every site in
- * the network, kept in sync with the existing `extrachill_team` +
- * `extrachill_team_manual_override` user_meta source of truth.
+ * The `extra_chill_team` role IS the source of truth for team
+ * membership. It is registered on every site in the network and
+ * assigned directly (via add_role/remove_role on the team-management
+ * UI in extrachill-admin-tools); there is no derivation, no
+ * synchronization, no parallel state.
  *
- * Why this exists:
- *   The legacy `ec_is_team_member()` function is a parallel access-control
- *   system with zero WP capability semantics. Native WP code paths
- *   (Gutenberg, REST permission callbacks, the media library,
- *   wp_handle_upload, third-party plugins) all check capabilities, not
- *   our custom function. The result: a "team member" with no role on a
- *   subsite passes `ec_is_team_member()` but fails `current_user_can(
- *   'upload_files' )`, producing silent 500s from Gutenberg image
- *   uploads. Granting a real role with real caps closes that gap
- *   structurally — every native cap-aware code path automatically
- *   respects team membership.
+ * Why a role and not a function-based gate:
+ *   Native WP code paths (Gutenberg, REST permission callbacks, the
+ *   media library, wp_handle_upload, third-party plugins) all check
+ *   capabilities. A custom function check is invisible to them. By
+ *   granting team members real WP capabilities via this role, every
+ *   cap-aware surface automatically respects team membership without
+ *   plugin-specific glue.
  *
- * Design:
- *   - Source of truth stays as `extrachill_team` + manual_override meta.
- *     No data migration; no breakage in whatever admin process sets
- *     those flags today.
- *   - The role is *derived* from the meta. Meta change → role sync.
- *   - The role is registered on every site in the network (existing +
- *     newly-created via wp_initialize_site).
- *   - The role is added alongside any existing per-site role, not as
- *     a replacement. Manual per-site grants (e.g. someone manually
- *     promoted to `editor` on a single subsite) coexist with the team
- *     role. Effective caps are the union.
- *   - Super-admins are skipped — they already have all caps via the
- *     multisite cap layer.
+ * Migration from the legacy meta system:
+ *   Earlier versions of extrachill-users stored team membership in
+ *   the `extrachill_team` + `extrachill_team_manual_override` user
+ *   meta keys, with a derivation step computing effective status from
+ *   those two values. That entire parallel state layer is retired.
+ *   ec_users_migrate_team_meta_to_role() runs once at activation /
+ *   first request after a version bump, converts the meta into role
+ *   assignments, then deletes the meta keys. Idempotent on re-run
+ *   because the second pass finds no meta to migrate.
  *
  * @package ExtraChill\Users
  * @since 0.11.0
@@ -55,9 +49,9 @@ const EC_USERS_TEAM_ROLE = 'extra_chill_team';
  *      role is what closes the silent-500 gap.
  *
  *   2. Custom EC team-only capabilities. These are the WP-native
- *      replacement for function-based `ec_is_team_member()` gates. Each
- *      one names a specific team-only surface (Studio, Roadie chat,
- *      Transcribe tokens, Events admin, the wp-admin admin bar).
+ *      replacement for function-based access checks. Each one names a
+ *      specific team-only surface (Studio, Roadie chat, Transcribe
+ *      tokens, Events admin, the wp-admin admin bar).
  *
  * Explicitly NOT granted: manage_options, delete_others_posts,
  * edit_users, plugin/theme management. The team role is for music
@@ -97,18 +91,16 @@ function ec_users_get_team_role_label() {
 /**
  * Register the team role on the current site.
  *
- * Safe to call repeatedly: add_role() is a no-op if the role already
- * exists, and we re-call add_role with the current cap set so deploys
- * that change the cap surface are picked up automatically.
+ * Safe to call repeatedly: when the role already exists with the
+ * current cap set the call is a single get_role() + array compare
+ * (~2µs). When the cap set has drifted (e.g. a deploy added a new
+ * capability), the role is removed and re-added with the fresh set.
  *
  * @return void
  */
 function ec_users_register_team_role() {
 	$caps = ec_users_get_team_role_caps();
 
-	// add_role() returns null if the role already exists. To pick up
-	// any capability additions/removals across deploys, remove and
-	// re-add when the cap set has drifted.
 	$existing = get_role( EC_USERS_TEAM_ROLE );
 	if ( $existing instanceof WP_Role ) {
 		$existing_caps = array_filter( $existing->capabilities );
@@ -168,84 +160,41 @@ function ec_users_get_network_site_ids() {
 }
 
 /**
- * Compute the effective team-member status for a user from source meta.
+ * Grant the team role to a user on every site in the network.
  *
- * Same semantics as the legacy ec_is_team_member() function — manual
- * override wins, otherwise the `extrachill_team` flag decides. Lives
- * here as a pure helper so the role-sync code does not depend on the
- * shimmed ec_is_team_member() (which will eventually delegate back into
- * the cap system).
- *
- * @param int $user_id User ID.
- * @return bool
- */
-function ec_users_compute_effective_team_status( $user_id ) {
-	$user_id = (int) $user_id;
-	if ( $user_id <= 0 ) {
-		return false;
-	}
-
-	$manual_override = get_user_meta( $user_id, 'extrachill_team_manual_override', true );
-	if ( 'add' === $manual_override ) {
-		return true;
-	}
-	if ( 'remove' === $manual_override ) {
-		return false;
-	}
-
-	return '1' === (string) get_user_meta( $user_id, 'extrachill_team', true );
-}
-
-/**
- * Sync the team role on every site for a user.
- *
- * Pure function over the source-of-truth meta: computes the effective
- * status once, then ensures every site in the network has the role
- * added (if status=true) or removed (if status=false).
+ * Used by the team-management UI (extrachill-admin-tools) and the
+ * one-time migration helper below. Pure write — no derivation, no
+ * meta read.
  *
  * Super-admins are skipped — they already have all caps via the
- * multisite cap layer, and giving them an extra role on every subsite
- * is noise.
+ * multisite cap layer, and giving them an extra role on every
+ * subsite is noise.
  *
- * @param int $user_id User ID to sync.
- * @return array{added: int[], removed: int[], skipped: bool} Per-site outcome (blog IDs added to / removed from).
+ * @param int $user_id User ID.
+ * @return int[] Blog IDs the role was newly added to (already-present sites omitted).
  */
-function ec_users_sync_team_role( $user_id ) {
+function ec_users_grant_team_role( $user_id ) {
 	$user_id = (int) $user_id;
-
-	$result = array(
-		'added'   => array(),
-		'removed' => array(),
-		'skipped' => false,
-	);
-
 	if ( $user_id <= 0 ) {
-		$result['skipped'] = true;
-		return $result;
+		return array();
 	}
 
 	if ( function_exists( 'is_super_admin' ) && is_super_admin( $user_id ) ) {
-		$result['skipped'] = true;
-		return $result;
+		return array();
 	}
 
-	$should_have_role = ec_users_compute_effective_team_status( $user_id );
-	$site_ids         = ec_users_get_network_site_ids();
+	$added = array();
 
-	foreach ( $site_ids as $blog_id ) {
+	foreach ( ec_users_get_network_site_ids() as $blog_id ) {
 		$blog_id = (int) $blog_id;
-
 		try {
 			switch_to_blog( $blog_id );
 
-			// Ensure the role exists on this site before we assign it.
-			// WP_User::add_role() writes the role name into user meta
-			// without checking whether the role is registered — so
-			// without this call, a sync against a fresh subsite that
-			// hasn't run init yet would create a "ghost role" (role on
-			// the user, but get_role() returns null, so the role's
-			// caps don't take effect). The call is cheap: a single
-			// get_role() lookup + array compare on the steady state.
+			// Ensure the role exists before assignment. WP_User::add_role
+			// writes the role name into user meta without checking whether
+			// the role is registered — skipping this call could create a
+			// "ghost role" (assignment exists but no caps take effect) on
+			// a freshly-created subsite that hasn't run init yet.
 			ec_users_register_team_role();
 
 			$user = new WP_User( $user_id );
@@ -253,89 +202,121 @@ function ec_users_sync_team_role( $user_id ) {
 				continue;
 			}
 
-			$has_role = in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true );
-
-			if ( $should_have_role && ! $has_role ) {
+			if ( ! in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ) ) {
 				$user->add_role( EC_USERS_TEAM_ROLE );
-				$result['added'][] = $blog_id;
-			} elseif ( ! $should_have_role && $has_role ) {
-				$user->remove_role( EC_USERS_TEAM_ROLE );
-				$result['removed'][] = $blog_id;
+				$added[] = $blog_id;
 			}
 		} finally {
 			restore_current_blog();
 		}
 	}
 
-	return $result;
+	return $added;
 }
 
 /**
- * Hook handler: sync the role when team meta changes.
+ * Revoke the team role from a user on every site in the network.
  *
- * Bound to added_user_meta / updated_user_meta / deleted_user_meta so
- * either source meta key triggers a re-sync.
+ * Pure write — counterpart to ec_users_grant_team_role.
  *
- * @param int    $meta_id    Meta ID (unused, hook signature requirement).
- * @param int    $user_id    User ID.
- * @param string $meta_key   Meta key.
- * @param mixed  $meta_value Meta value (unused; sync recomputes from source).
- * @return void
+ * @param int $user_id User ID.
+ * @return int[] Blog IDs the role was removed from.
  */
-// phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed -- hook signature requires $meta_value position.
-function ec_users_on_team_meta_change( $meta_id, $user_id, $meta_key, $meta_value ) {
-	if ( ! in_array( $meta_key, array( 'extrachill_team', 'extrachill_team_manual_override' ), true ) ) {
-		return;
-	}
-
-	// Defensive recursion guard. sync writes role assignments via
-	// update_user_meta on the {prefix}_capabilities key, which is
-	// filtered out by the in_array check above — so direct recursion
-	// is impossible. This guards against indirect recursion if any
-	// future code writes back to extrachill_team* meta from inside
-	// updated_user_meta on the same user.
-	static $syncing = array();
-	if ( ! empty( $syncing[ $user_id ] ) ) {
-		return;
-	}
-	$syncing[ $user_id ] = true;
-
-	try {
-		ec_users_sync_team_role( $user_id );
-	} finally {
-		unset( $syncing[ $user_id ] );
-	}
-}
-add_action( 'added_user_meta', 'ec_users_on_team_meta_change', 10, 4 );
-add_action( 'updated_user_meta', 'ec_users_on_team_meta_change', 10, 4 );
-add_action( 'deleted_user_meta', 'ec_users_on_team_meta_change', 10, 4 );
-
-/**
- * Re-sync the team role after a user profile is saved via wp-admin.
- *
- * The wp-admin user-edit page uses a single-role dropdown — saving it
- * calls WP_User::set_role() which REPLACES the user's roles rather
- * than adding to them. For team members with the extra_chill_team
- * role layered on top of their primary role (e.g. subscriber +
- * extra_chill_team), this silently strips the team role on save.
- *
- * The underlying source-of-truth meta (extrachill_team /
- * extrachill_team_manual_override) is unchanged by the profile
- * save, so we re-sync after every profile_update to restore the
- * role from meta. Idempotent: no-op for non-team users.
- *
- * @param int $user_id User ID of the profile that was updated.
- * @return void
- */
-function ec_users_on_profile_update_resync( $user_id ) {
+function ec_users_revoke_team_role( $user_id ) {
 	$user_id = (int) $user_id;
 	if ( $user_id <= 0 ) {
-		return;
+		return array();
 	}
 
-	ec_users_sync_team_role( $user_id );
+	$removed = array();
+
+	foreach ( ec_users_get_network_site_ids() as $blog_id ) {
+		$blog_id = (int) $blog_id;
+		try {
+			switch_to_blog( $blog_id );
+
+			$user = new WP_User( $user_id );
+			if ( ! $user->exists() ) {
+				continue;
+			}
+
+			if ( in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ) ) {
+				$user->remove_role( EC_USERS_TEAM_ROLE );
+				$removed[] = $blog_id;
+			}
+		} finally {
+			restore_current_blog();
+		}
+	}
+
+	return $removed;
 }
-add_action( 'profile_update', 'ec_users_on_profile_update_resync', 20, 1 );
+
+/**
+ * One-time migration: legacy meta → role assignments, then delete meta.
+ *
+ * Before this PR, team membership was stored in user_meta keys
+ * `extrachill_team` (auto flag) and `extrachill_team_manual_override`
+ * ('add' / 'remove'). The effective status was computed at read time.
+ *
+ * This migration:
+ *   1. Computes effective status from the legacy meta exactly the way
+ *      the old ec_is_team_member() did.
+ *   2. Grants the team role on every site for users whose effective
+ *      status is "team".
+ *   3. Deletes both meta keys for every user that had them set.
+ *
+ * Idempotent on re-run: a second pass finds no users with the meta
+ * (already deleted), so it's a no-op.
+ *
+ * @return array{granted: int, meta_deleted: int} Summary counts.
+ */
+function ec_users_migrate_team_meta_to_role() {
+	global $wpdb;
+
+	$summary = array(
+		'granted'      => 0,
+		'meta_deleted' => 0,
+	);
+
+	// Find every user that has either of the legacy meta keys set.
+	// We include 'remove' overrides explicitly so we delete their meta
+	// even though they don't get the role — clean slate either way.
+	$user_ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- One-shot migration query.
+		"SELECT DISTINCT user_id FROM {$wpdb->usermeta}
+		 WHERE meta_key IN ( 'extrachill_team', 'extrachill_team_manual_override' )"
+	);
+
+	foreach ( (array) $user_ids as $user_id ) {
+		$user_id = (int) $user_id;
+		if ( $user_id <= 0 ) {
+			continue;
+		}
+
+		// Replicate the legacy effective-status semantics so we don't
+		// change anyone's membership during the migration.
+		$override    = get_user_meta( $user_id, 'extrachill_team_manual_override', true );
+		$flag        = get_user_meta( $user_id, 'extrachill_team', true );
+		$should_have = ( 'add' === $override )
+			? true
+			: ( ( 'remove' === $override )
+				? false
+				: ( '1' === (string) $flag ) );
+
+		if ( $should_have ) {
+			$added = ec_users_grant_team_role( $user_id );
+			if ( ! empty( $added ) ) {
+				++$summary['granted'];
+			}
+		}
+
+		delete_user_meta( $user_id, 'extrachill_team' );
+		delete_user_meta( $user_id, 'extrachill_team_manual_override' );
+		++$summary['meta_deleted'];
+	}
+
+	return $summary;
+}
 
 /**
  * Register the role on a newly-initialized subsite.
@@ -357,15 +338,10 @@ add_action( 'wp_initialize_site', 'ec_users_on_new_site_register_role', 200 );
  * Idempotent safety net: ensure the role exists on the current site
  * with the current cap set.
  *
- * Runs early on every request via init. ec_users_register_team_role()
- * self-debounces — it does a cheap get_role() + ksort()+!== compare
- * against the desired cap set and only writes when those diverge, so
- * the steady-state cost is a single get_role() call per request.
- *
- * The previous version-flag based gate (skip if option matches plugin
- * version) was wrong because patch-level deploys that change the cap
- * set without bumping the version would never propagate. The cap-diff
- * check IS the debounce.
+ * Runs early on every request via init at priority 5 (before any
+ * other plugin's init handler that might cap-check). The function
+ * self-debounces — when the role already exists with the desired
+ * caps, the call is a single get_role() lookup (~2µs).
  *
  * @return void
  */
@@ -373,3 +349,53 @@ function ec_users_maybe_register_team_role() {
 	ec_users_register_team_role();
 }
 add_action( 'init', 'ec_users_maybe_register_team_role', 5 );
+
+/**
+ * Run the one-time meta-to-role migration after a version bump.
+ *
+ * Activation hooks fire only on plugin enable, not on plugin update,
+ * so we also fire from admin_init when the stored migration version
+ * lags behind the plugin version. Gated on a site_option flag so the
+ * migration runs at most once per version (a single get_site_option
+ * call on steady-state requests).
+ *
+ * @return void
+ */
+function ec_users_maybe_run_team_migration() {
+	$option_key       = 'extrachill_users_team_migration_version';
+	$current_version  = defined( 'EXTRACHILL_USERS_VERSION' ) ? EXTRACHILL_USERS_VERSION : '0';
+	$migrated_version = get_site_option( $option_key, '0' );
+
+	if ( version_compare( $migrated_version, $current_version, '>=' ) ) {
+		return;
+	}
+
+	ec_users_register_team_role_network_wide();
+	ec_users_migrate_team_meta_to_role();
+
+	update_site_option( $option_key, $current_version );
+}
+add_action( 'admin_init', 'ec_users_maybe_run_team_migration' );
+
+/**
+ * Hide the team role from the wp-admin user-edit single-role dropdown.
+ *
+ * The wp-admin user-edit page uses a single-role SELECT that calls
+ * WP_User::set_role() on save — which REPLACES the user's roles. If
+ * the team role were listed there, a super-admin saving the profile
+ * (even just to update display name) could silently strip the team
+ * role from a multi-role user.
+ *
+ * Team membership is managed exclusively via the team-management UI
+ * in extrachill-admin-tools, which writes the role directly via
+ * add_role/remove_role. Removing it from editable_roles makes the
+ * wp-admin dropdown incapable of touching the team role at all.
+ *
+ * @param array<string,array> $roles Roles indexed by slug.
+ * @return array<string,array> Filtered roles.
+ */
+function ec_users_hide_team_role_from_editable_roles( $roles ) {
+	unset( $roles[ EC_USERS_TEAM_ROLE ] );
+	return $roles;
+}
+add_filter( 'editable_roles', 'ec_users_hide_team_role_from_editable_roles' );

@@ -1,11 +1,10 @@
 <?php
 /**
- * Unit tests for the team role helpers (#45 Phase 1).
+ * Unit tests for the team role (#45 Phase 1).
  *
- * Covers the pure functions in inc/team-members/role.php that don't
- * need network-wide site iteration. Integration coverage for the
- * network-wide sync behavior lives in tests/integration once a real
- * multisite test harness is available.
+ * The extra_chill_team WP role is the source of truth for team
+ * membership. No meta, no derivation. These tests verify the role
+ * surface, the one-shot migration, and the cap-only shim semantics.
  */
 
 class Test_Team_Role extends WP_UnitTestCase {
@@ -13,6 +12,7 @@ class Test_Team_Role extends WP_UnitTestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		require_once dirname( __DIR__, 2 ) . '/inc/team-members/role.php';
+		require_once dirname( __DIR__, 2 ) . '/inc/team-members.php';
 
 		// Ensure each test starts with the role NOT registered so tests
 		// that verify registration are observing a real transition,
@@ -24,6 +24,10 @@ class Test_Team_Role extends WP_UnitTestCase {
 		remove_role( EC_USERS_TEAM_ROLE );
 		parent::tearDown();
 	}
+
+	// -----------------------------------------------------------------
+	// Capability surface
+	// -----------------------------------------------------------------
 
 	public function test_role_caps_grant_upload_files(): void {
 		$caps = ec_users_get_team_role_caps();
@@ -55,58 +59,9 @@ class Test_Team_Role extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_compute_effective_status_zero_user(): void {
-		$this->assertFalse( ec_users_compute_effective_team_status( 0 ) );
-		$this->assertFalse( ec_users_compute_effective_team_status( -1 ) );
-	}
-
-	public function test_compute_effective_status_flag_only(): void {
-		$user_id = self::factory()->user->create();
-
-		$this->assertFalse( ec_users_compute_effective_team_status( $user_id ) );
-
-		update_user_meta( $user_id, 'extrachill_team', '1' );
-		$this->assertTrue( ec_users_compute_effective_team_status( $user_id ) );
-
-		update_user_meta( $user_id, 'extrachill_team', '0' );
-		$this->assertFalse( ec_users_compute_effective_team_status( $user_id ) );
-	}
-
-	public function test_compute_effective_status_manual_override_add_wins(): void {
-		$user_id = self::factory()->user->create();
-
-		update_user_meta( $user_id, 'extrachill_team', '0' );
-		update_user_meta( $user_id, 'extrachill_team_manual_override', 'add' );
-
-		$this->assertTrue(
-			ec_users_compute_effective_team_status( $user_id ),
-			'Manual override "add" must override a missing/zero extrachill_team flag.'
-		);
-	}
-
-	public function test_compute_effective_status_manual_override_remove_wins(): void {
-		$user_id = self::factory()->user->create();
-
-		update_user_meta( $user_id, 'extrachill_team', '1' );
-		update_user_meta( $user_id, 'extrachill_team_manual_override', 'remove' );
-
-		$this->assertFalse(
-			ec_users_compute_effective_team_status( $user_id ),
-			'Manual override "remove" must override a truthy extrachill_team flag.'
-		);
-	}
-
-	public function test_compute_effective_status_unknown_override_falls_through(): void {
-		$user_id = self::factory()->user->create();
-
-		update_user_meta( $user_id, 'extrachill_team', '1' );
-		update_user_meta( $user_id, 'extrachill_team_manual_override', 'garbage' );
-
-		$this->assertTrue(
-			ec_users_compute_effective_team_status( $user_id ),
-			'Unknown override values should fall through to the meta flag.'
-		);
-	}
+	// -----------------------------------------------------------------
+	// Role registration
+	// -----------------------------------------------------------------
 
 	public function test_register_team_role_creates_role_with_expected_caps(): void {
 		ec_users_register_team_role();
@@ -142,88 +97,190 @@ class Test_Team_Role extends WP_UnitTestCase {
 		$this->assertTrue( $fresh->has_cap( 'access_studio' ) );
 	}
 
-	public function test_is_team_member_with_cap_returns_true(): void {
-		require_once dirname( __DIR__, 2 ) . '/inc/team-members.php';
+	// -----------------------------------------------------------------
+	// ec_is_team_member semantics (cap-only, no meta fallback)
+	// -----------------------------------------------------------------
 
+	public function test_is_team_member_with_role_returns_true(): void {
 		ec_users_register_team_role();
 
 		$user_id = self::factory()->user->create();
 		$user    = new WP_User( $user_id );
 		$user->add_role( EC_USERS_TEAM_ROLE );
 
+		$this->assertTrue( ec_is_team_member( $user_id ) );
+
 		wp_set_current_user( $user_id );
 		$this->assertTrue( ec_is_team_member() );
-		$this->assertTrue( ec_is_team_member( $user_id ) );
 	}
 
-	public function test_is_team_member_falls_back_to_meta_when_role_absent(): void {
-		require_once dirname( __DIR__, 2 ) . '/inc/team-members.php';
+	public function test_is_team_member_without_role_returns_false_even_with_legacy_meta(): void {
+		ec_users_register_team_role();
 
-		// Make sure the user does not have the role.
+		// User has the LEGACY meta but no role assignment. The new code
+		// must NOT honor the meta — that would resurrect the parallel
+		// state we just retired. Role is the only source of truth.
 		$user_id = self::factory()->user->create();
-		$user    = new WP_User( $user_id );
-		$user->remove_role( EC_USERS_TEAM_ROLE );
-
-		$this->assertFalse( ec_is_team_member( $user_id ) );
-
 		update_user_meta( $user_id, 'extrachill_team', '1' );
-		$this->assertTrue(
+		update_user_meta( $user_id, 'extrachill_team_manual_override', 'add' );
+
+		$this->assertFalse(
 			ec_is_team_member( $user_id ),
-			'Transition fallback: meta-based status must still be honored before reconcile runs.'
+			'Legacy meta must not be honored; only the role decides.'
 		);
 	}
 
 	public function test_is_team_member_zero_user_id_returns_false(): void {
-		require_once dirname( __DIR__, 2 ) . '/inc/team-members.php';
-
 		wp_set_current_user( 0 );
 		$this->assertFalse( ec_is_team_member() );
 	}
 
-	/**
-	 * Simulates the wp-admin user-edit foot-gun: saving the profile via
-	 * the single-role dropdown drops the layered extra_chill_team role.
-	 * The profile_update hook should re-sync from meta and restore it.
-	 *
-	 * Note: ec_users_sync_team_role does network-wide switch_to_blog
-	 * iteration. In a single-site unit test we can't observe the full
-	 * network behavior, but we CAN observe that the role is restored
-	 * on the current site, which is the most-likely real-world site
-	 * for the wp-admin edit to have occurred on.
-	 */
-	public function test_profile_update_resyncs_team_role(): void {
+	// -----------------------------------------------------------------
+	// Grant / revoke helpers
+	// -----------------------------------------------------------------
+
+	public function test_grant_team_role_assigns_on_current_site(): void {
+		ec_users_register_team_role();
+
+		$user_id = self::factory()->user->create();
+		ec_users_grant_team_role( $user_id );
+
+		$user = new WP_User( $user_id );
+		$this->assertTrue( in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ) );
+	}
+
+	public function test_grant_team_role_is_additive_not_replacing(): void {
+		ec_users_register_team_role();
+
+		$user_id = self::factory()->user->create( array( 'role' => 'subscriber' ) );
+		ec_users_grant_team_role( $user_id );
+
+		$user = new WP_User( $user_id );
+		$this->assertTrue(
+			in_array( 'subscriber', (array) $user->roles, true ),
+			'Original role must be preserved.'
+		);
+		$this->assertTrue(
+			in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ),
+			'Team role must be added alongside.'
+		);
+	}
+
+	public function test_revoke_team_role_removes_only_team_role(): void {
+		ec_users_register_team_role();
+
+		$user_id = self::factory()->user->create( array( 'role' => 'subscriber' ) );
+		ec_users_grant_team_role( $user_id );
+		ec_users_revoke_team_role( $user_id );
+
+		$user = new WP_User( $user_id );
+		$this->assertFalse(
+			in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ),
+			'Team role must be revoked.'
+		);
+		$this->assertTrue(
+			in_array( 'subscriber', (array) $user->roles, true ),
+			'Other roles must be preserved.'
+		);
+	}
+
+	public function test_grant_team_role_zero_user_id_returns_empty(): void {
+		$this->assertSame( array(), ec_users_grant_team_role( 0 ) );
+		$this->assertSame( array(), ec_users_grant_team_role( -1 ) );
+	}
+
+	// -----------------------------------------------------------------
+	// One-shot migration
+	// -----------------------------------------------------------------
+
+	public function test_migration_grants_role_to_users_with_team_flag(): void {
+		ec_users_register_team_role();
+
+		$team_user_id     = self::factory()->user->create();
+		$non_team_user_id = self::factory()->user->create();
+		update_user_meta( $team_user_id, 'extrachill_team', '1' );
+
+		$summary = ec_users_migrate_team_meta_to_role();
+
+		$this->assertSame( 1, $summary['granted'] );
+		$this->assertSame( 1, $summary['meta_deleted'] );
+
+		$this->assertTrue( user_can( $team_user_id, 'access_studio' ) );
+		$this->assertFalse( user_can( $non_team_user_id, 'access_studio' ) );
+	}
+
+	public function test_migration_honors_manual_override_add(): void {
+		ec_users_register_team_role();
+
+		$user_id = self::factory()->user->create();
+		update_user_meta( $user_id, 'extrachill_team', '0' );
+		update_user_meta( $user_id, 'extrachill_team_manual_override', 'add' );
+
+		ec_users_migrate_team_meta_to_role();
+
+		$this->assertTrue(
+			user_can( $user_id, 'access_studio' ),
+			'manual_override=add must grant the role even when the flag is 0.'
+		);
+	}
+
+	public function test_migration_honors_manual_override_remove(): void {
+		ec_users_register_team_role();
+
+		$user_id = self::factory()->user->create();
+		update_user_meta( $user_id, 'extrachill_team', '1' );
+		update_user_meta( $user_id, 'extrachill_team_manual_override', 'remove' );
+
+		ec_users_migrate_team_meta_to_role();
+
+		$this->assertFalse(
+			user_can( $user_id, 'access_studio' ),
+			'manual_override=remove must NOT grant the role even when the flag is 1.'
+		);
+	}
+
+	public function test_migration_deletes_legacy_meta(): void {
+		ec_users_register_team_role();
+
+		$user_id = self::factory()->user->create();
+		update_user_meta( $user_id, 'extrachill_team', '1' );
+		update_user_meta( $user_id, 'extrachill_team_manual_override', 'add' );
+
+		ec_users_migrate_team_meta_to_role();
+
+		$this->assertSame( '', (string) get_user_meta( $user_id, 'extrachill_team', true ) );
+		$this->assertSame( '', (string) get_user_meta( $user_id, 'extrachill_team_manual_override', true ) );
+	}
+
+	public function test_migration_idempotent_on_second_run(): void {
 		ec_users_register_team_role();
 
 		$user_id = self::factory()->user->create();
 		update_user_meta( $user_id, 'extrachill_team', '1' );
 
-		// Verify the meta-change hook granted the role.
-		$user = new WP_User( $user_id );
-		$this->assertTrue(
-			in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ),
-			'Meta-change hook should have granted the role.'
-		);
+		$first  = ec_users_migrate_team_meta_to_role();
+		$second = ec_users_migrate_team_meta_to_role();
 
-		// Simulate the wp-admin profile save: single-role replacement
-		// strips the extra_chill_team role.
-		$user->set_role( 'subscriber' );
-		$user = new WP_User( $user_id );
-		$this->assertFalse(
-			in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ),
-			'set_role() should have stripped the team role.'
-		);
+		$this->assertSame( 1, $first['granted'] );
+		$this->assertSame( 0, $second['granted'], 'Second pass finds no meta to migrate.' );
+		$this->assertSame( 0, $second['meta_deleted'] );
 
-		// Fire profile_update — our hook should re-sync from meta.
-		do_action( 'profile_update', $user_id );
+		// Role assignment from the first pass is preserved.
+		$this->assertTrue( user_can( $user_id, 'access_studio' ) );
+	}
 
-		$user = new WP_User( $user_id );
-		$this->assertTrue(
-			in_array( EC_USERS_TEAM_ROLE, (array) $user->roles, true ),
-			'profile_update hook should have restored the team role from meta.'
-		);
-		$this->assertTrue(
-			in_array( 'subscriber', (array) $user->roles, true ),
-			'subscriber role should be preserved.'
+	// -----------------------------------------------------------------
+	// editable_roles filter — wp-admin user-edit dropdown protection
+	// -----------------------------------------------------------------
+
+	public function test_team_role_hidden_from_editable_roles(): void {
+		ec_users_register_team_role();
+
+		$roles = get_editable_roles();
+		$this->assertArrayNotHasKey(
+			EC_USERS_TEAM_ROLE,
+			$roles,
+			'extra_chill_team must be hidden from wp-admin role dropdowns to prevent accidental strip via single-role replacement.'
 		);
 	}
 }
