@@ -872,10 +872,15 @@ function ec_users_get_event_attendees( int $event_id, int $blog_id = 0, int $lim
 			continue;
 		}
 
+		$profile_url = function_exists( 'extrachill_get_user_community_profile_url' )
+			? (string) extrachill_get_user_community_profile_url( (int) $user->ID )
+			: '';
+
 		$attendees[] = array(
 			'user_id'      => (int) $user->ID,
 			'display_name' => $user->display_name,
 			'avatar_url'   => get_avatar_url( $user->ID, array( 'size' => 48 ) ),
+			'profile_url'  => $profile_url,
 		);
 	}
 
