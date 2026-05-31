@@ -24,11 +24,14 @@
  *   EventDatesTable::upsert.
  * - `datamachine/upsert-post` gives content-hash idempotency + provenance for
  *   free, on top of our own (source, external_id) idempotency stamp.
- * - Imported created-events land in `pending` (not auto-published), matching
- *   the submit-event flow, so historic / out-of-market shows don't publish
- *   unreviewed onto the live calendar. My Shows still surfaces them: the
- *   tracking shows/stats queries join the tracking table to
- *   `datamachine_event_dates` with no post_status filter.
+ * - Imported created-events publish directly to the calendar. My Shows is
+ *   intentionally both historical and forward-looking, and the public
+ *   calendar/archive default to upcoming-only views (UpcomingFilter), so
+ *   historical imports add timeline depth without flooding default surfaces.
+ *   Per-event IndexNow pings are suppressed for the import batch by the
+ *   orchestrator (datamachine_indexnow_skip_auto_submit), avoiding thousands
+ *   of synchronous outbound pings; the sitemap still advertises events on the
+ *   normal crawl cadence.
  * - After taxonomy assignment we fire `datamachine_event_taxonomy_processed`,
  *   so extrachill-events' location-normalizer resolves the `location` (city)
  *   term from the venue's `_venue_city` meta. Without this, imported events
@@ -192,10 +195,13 @@ final class EventCreator {
 				'title'          => $title,
 				'content'        => $content,
 				'content_format' => 'blocks',
-				// Imported created-events are NOT auto-published. They land in
-				// the pending review queue so historic / out-of-market shows
-				// don't go live on the calendar unreviewed (#81).
-				'post_status'    => 'pending',
+				// Imported created-events publish directly to the calendar.
+				// My Shows is intentionally both historical and forward-looking,
+				// and the public calendar/archive default to upcoming-only views
+				// (UpcomingFilter), so historical imports add timeline depth
+				// without flooding the default surfaces. Per-event IndexNow pings
+				// are suppressed during the import batch by the orchestrator.
+				'post_status'    => 'publish',
 				'taxonomies'     => $taxonomies,
 				// Stamp audit + idempotency meta. Our own (source, external_id)
 				// pair is the authoritative re-import guard (checked by the
