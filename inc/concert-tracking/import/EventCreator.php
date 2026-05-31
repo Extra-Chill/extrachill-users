@@ -401,35 +401,35 @@ final class EventCreator {
 	/**
 	 * Find or create the artist term for this event.
 	 *
-	 * The artist taxonomy doesn't ship a public find-or-create helper, so we
-	 * implement the same smart-lookup pattern locally (exact name, then with /
-	 * without "The " prefix).
+	 * Delegates to the canonical Data Machine term resolver
+	 * (`datamachine/resolve-term`) with fuzzy matching enabled, so artist
+	 * names dedup on normalized comparison (case/punctuation/article/accent
+	 * insensitive) — e.g. "Tyler, the Creator" resolves to an existing
+	 * "Tyler the Creator" term instead of creating a duplicate. The resolver
+	 * is taxonomy-agnostic core, so no artist-awareness leaks into the generic
+	 * events layer (extrachill-events#144).
 	 */
 	private static function ensure_artist_term( ExternalEvent $event ): ?int {
 		if ( '' === $event->headliner ) {
 			return null;
 		}
 
-		$name = $event->headliner;
-
-		$existing = get_term_by( 'name', $name, 'artist' );
-
-		if ( ! $existing ) {
-			$alt = ( stripos( $name, 'The ' ) === 0 ) ? substr( $name, 4 ) : 'The ' . $name;
-			if ( $alt ) {
-				$existing = get_term_by( 'name', $alt, 'artist' );
-			}
-		}
-
-		if ( $existing && ! is_wp_error( $existing ) ) {
-			return (int) $existing->term_id;
-		}
-
-		$inserted = wp_insert_term( $name, 'artist' );
-		if ( is_wp_error( $inserted ) ) {
+		if ( ! class_exists( '\\DataMachine\\Abilities\\Taxonomy\\ResolveTermAbility' ) ) {
 			return null;
 		}
 
-		return isset( $inserted['term_id'] ) ? (int) $inserted['term_id'] : null;
+		$result = \DataMachine\Abilities\Taxonomy\ResolveTermAbility::resolve(
+			$event->headliner,
+			'artist',
+			true,  // create if not found
+			array(),
+			true   // fuzzy: normalized-name dedup
+		);
+
+		if ( empty( $result['success'] ) || empty( $result['term_id'] ) ) {
+			return null;
+		}
+
+		return (int) $result['term_id'];
 	}
 }
