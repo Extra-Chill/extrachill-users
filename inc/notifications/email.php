@@ -80,35 +80,64 @@ const EC_NOTIFICATIONS_LAST_EMAILED_META = 'ec_notifications_last_emailed';
 const EC_NOTIFICATIONS_EMAILS_DISABLED_META = 'ec_notification_emails_disabled';
 
 /**
- * Cron hook for the recurring digest run.
+ * Action Scheduler hook for the recurring digest run.
  */
 const EC_NOTIFICATIONS_EMAIL_CRON_HOOK = 'ec_notifications_email_digest';
+
+/**
+ * Recurring interval key (resolved by the datamachine_scheduler_intervals filter).
+ */
+const EC_NOTIFICATIONS_EMAIL_INTERVAL = 'hourly';
 
 // ─── Schedule ──────────────────────────────────────────────────────────────
 
 /**
- * Ensure the recurring digest cron is scheduled (idempotent).
+ * Ensure the recurring digest schedule matches the desired state (idempotent).
  *
- * Self-heals on every site that loads this Network:true plugin, mirroring the
- * welcome-email fallback pattern in inc/core/activation.php. Because the
+ * Delegates all Action Scheduler plumbing to Data Machine's shared scheduling
+ * primitive (RecurringScheduler::ensureSchedule) rather than hand-rolling
+ * wp_schedule_event — we inherit deterministic stagger, idempotent slot
+ * preservation, persistence verification, and clean unscheduling.
+ *
+ * Self-heals on every site that loads this Network:true plugin. Because the
  * substrate is one base_prefix table shared by the whole network, only ONE
- * site needs to run the digest — we pin it to the SMTP-configured mail site so
- * exactly one scheduler owns it and sends always originate from a
- * mail-capable context.
+ * site should run the digest — ownership is pinned to the SMTP-configured mail
+ * site and expressed via the `enabled` flag: the owner site schedules, every
+ * other site passes enabled=false so the primitive cleanly unschedules any
+ * stray slot. Sends therefore always originate from a mail-capable context.
+ *
+ * Falls back to plain WP-Cron when Data Machine (the primitive) is unavailable.
  */
 function ec_notifications_email_maybe_schedule() {
-	if ( ! ec_notifications_email_is_owner_site() ) {
-		// Not the owner site — make sure no stray schedule lingers here.
+	$enabled = ec_notifications_email_is_owner_site();
+
+	if ( ! class_exists( '\DataMachine\Engine\Tasks\RecurringScheduler' ) ) {
+		// Fallback: DM not loaded. Mirror the prior hand-rolled behavior so the
+		// digest still runs (or is cleaned up) without the shared primitive.
 		$existing = wp_next_scheduled( EC_NOTIFICATIONS_EMAIL_CRON_HOOK );
-		if ( $existing ) {
-			wp_unschedule_event( $existing, EC_NOTIFICATIONS_EMAIL_CRON_HOOK );
+		if ( ! $enabled ) {
+			if ( $existing ) {
+				wp_unschedule_event( $existing, EC_NOTIFICATIONS_EMAIL_CRON_HOOK );
+			}
+			return;
+		}
+		if ( ! $existing ) {
+			wp_schedule_event( time() + HOUR_IN_SECONDS, EC_NOTIFICATIONS_EMAIL_INTERVAL, EC_NOTIFICATIONS_EMAIL_CRON_HOOK );
 		}
 		return;
 	}
 
-	if ( ! wp_next_scheduled( EC_NOTIFICATIONS_EMAIL_CRON_HOOK ) ) {
-		wp_schedule_event( time() + HOUR_IN_SECONDS, 'hourly', EC_NOTIFICATIONS_EMAIL_CRON_HOOK );
-	}
+	\DataMachine\Engine\Tasks\RecurringScheduler::ensureSchedule(
+		EC_NOTIFICATIONS_EMAIL_CRON_HOOK,
+		array(),
+		EC_NOTIFICATIONS_EMAIL_INTERVAL,
+		array(
+			// Stagger the first run within the hour so the digest doesn't fire
+			// in lockstep with every other co-scheduled DM action.
+			'stagger_seed' => crc32( EC_NOTIFICATIONS_EMAIL_CRON_HOOK ),
+		),
+		$enabled
+	);
 }
 add_action( 'init', 'ec_notifications_email_maybe_schedule' );
 
@@ -243,15 +272,22 @@ function ec_notifications_email_in_cooldown( $user_id, $now ) {
 }
 
 /**
- * Assemble + send one digest email to a user.
+ * Assemble + queue one digest email to a user.
  *
  * Re-checks unread state at send time (state can change between the candidate
- * scan and the send). On a successful send, records the last-emailed timestamp
- * so the cooldown applies. Mail goes through ec_send_email(), which resolves the
- * SMTP-configured site and handles switch_to_blog() internally — do NOT wrap.
+ * scan and the enqueue). Mail goes through ec_send_email_queued(), which routes
+ * the actual wp_mail() through Action Scheduler (non-blocking, with built-in
+ * 3-attempt retry/backoff) and resolves the SMTP-configured site internally —
+ * do NOT wrap in switch_to_blog().
+ *
+ * Cooldown semantics: the last-emailed timestamp is stamped on successful
+ * ENQUEUE, not on confirmed delivery. The queued ability owns retries, so a
+ * successful enqueue is the right cooldown trigger — if all retries ultimately
+ * fail, the next cron tick simply re-evaluates the user after the cooldown
+ * window (no email that window, which is acceptable for a soft retention nudge).
  *
  * @param int $user_id Recipient user ID.
- * @return bool True when an email was dispatched.
+ * @return bool True when an email was queued.
  */
 function ec_notifications_email_send_digest( $user_id ) {
 	$user_id = (int) $user_id;
@@ -292,7 +328,7 @@ function ec_notifications_email_send_digest( $user_id ) {
 
 	$digest = ec_notifications_email_build_digest( $user, $unread_count, $preview );
 
-	$envelope = ec_send_email(
+	$envelope = ec_send_email_queued(
 		array(
 			'to'       => $user->user_email,
 			'subject'  => $digest['subject'],
@@ -308,15 +344,15 @@ function ec_notifications_email_send_digest( $user_id ) {
 		)
 	);
 
-	$sent = ! empty( $envelope['success'] );
+	$queued = ! empty( $envelope['success'] );
 
-	if ( ! $sent ) {
+	if ( ! $queued ) {
 		$error = isset( $envelope['error'] ) ? (string) $envelope['error'] : 'unknown error';
-		error_log( sprintf( 'ec_notifications_email: digest send failed for user %d: %s', $user_id, $error ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- canonical operational logging surface.
+		error_log( sprintf( 'ec_notifications_email: digest enqueue failed for user %d: %s', $user_id, $error ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- canonical operational logging surface.
 		return false;
 	}
 
-	// Stamp the cooldown only after a confirmed send.
+	// Stamp the cooldown on successful enqueue (the queued ability owns retries).
 	update_user_meta( $user_id, EC_NOTIFICATIONS_LAST_EMAILED_META, time() );
 
 	return true;

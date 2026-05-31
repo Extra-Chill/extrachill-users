@@ -74,11 +74,24 @@ function extrachill_users_run_deactivation() {
 	}
 
 	// Unread-notification email digest channel (inc/notifications/email.php).
-	if ( defined( 'EC_NOTIFICATIONS_EMAIL_CRON_HOOK' ) ) {
-		wp_clear_scheduled_hook( EC_NOTIFICATIONS_EMAIL_CRON_HOOK );
-	} else {
-		wp_clear_scheduled_hook( 'ec_notifications_email_digest' );
+	// The schedule is owned by DM's RecurringScheduler (Action Scheduler group
+	// 'data-machine'); unschedule through it when available, and also clear any
+	// WP-Cron slot left by the DM-unavailable fallback path.
+	$digest_hook = defined( 'EC_NOTIFICATIONS_EMAIL_CRON_HOOK' )
+		? EC_NOTIFICATIONS_EMAIL_CRON_HOOK
+		: 'ec_notifications_email_digest';
+
+	if ( class_exists( '\DataMachine\Engine\Tasks\RecurringScheduler' ) ) {
+		\DataMachine\Engine\Tasks\RecurringScheduler::ensureSchedule(
+			$digest_hook,
+			array(),
+			null,
+			array(),
+			false
+		);
 	}
+
+	wp_clear_scheduled_hook( $digest_hook );
 }
 
 /**
