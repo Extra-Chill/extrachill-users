@@ -17,15 +17,18 @@
     },
     {
       "file": "blocks/login-register/block.json",
-      "pattern": "\"version\":\\s*\"([0-9.]+)\""
+      "pattern": "\"version\":\\s*\"([0-9.]+)\"",
+      "artifact_path": "build/login-register/block.json"
     },
     {
       "file": "blocks/onboarding/block.json",
-      "pattern": "\"version\":\\s*\"([0-9.]+)\""
+      "pattern": "\"version\":\\s*\"([0-9.]+)\"",
+      "artifact_path": "build/onboarding/block.json"
     },
     {
       "file": "blocks/password-reset/block.json",
-      "pattern": "\"version\":\\s*\"([0-9.]+)\""
+      "pattern": "\"version\":\\s*\"([0-9.]+)\"",
+      "artifact_path": "build/password-reset/block.json"
     }
   ]
 }
