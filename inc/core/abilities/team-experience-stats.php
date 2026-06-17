@@ -69,9 +69,10 @@ function extrachill_users_ability_get_team_experience_stats( $input ) {
 	$days = isset( $input['days'] ) ? (int) $input['days'] : 28;
 
 	// Single-source event contract (extrachill-users#129): iterate the
-	// shared group constant instead of re-listing string literals, so this
-	// reader can never desync from the emit constants in events.php.
-	$team_event_types = EC_USERS_TEAM_EXPERIENCE_EVENTS;
+	// canonical group constant owned by extrachill-analytics instead of
+	// re-listing string literals, so this reader can never desync from the
+	// emit sites (which reference the same EC_ANALYTICS_EVENT_* constants).
+	$team_event_types = EC_ANALYTICS_TEAM_EXPERIENCE_EVENTS;
 
 	$events = array();
 	foreach ( $team_event_types as $event_type ) {
@@ -84,8 +85,8 @@ function extrachill_users_ability_get_team_experience_stats( $input ) {
 			? gmdate( 'Y-m-d', strtotime( "-{$days} days" ) ) . ' to ' . gmdate( 'Y-m-d' )
 			: 'all time',
 		'team_member_count'    => extrachill_users_count_team_members(),
-		'team_members_added'   => $events[ EC_USERS_EVENT_TEAM_MEMBER_ADDED ],
-		'team_members_removed' => $events[ EC_USERS_EVENT_TEAM_MEMBER_REMOVED ],
+		'team_members_added'   => $events[ EC_ANALYTICS_EVENT_TEAM_MEMBER_ADDED ],
+		'team_members_removed' => $events[ EC_ANALYTICS_EVENT_TEAM_MEMBER_REMOVED ],
 		'events'               => $events,
 	);
 }
