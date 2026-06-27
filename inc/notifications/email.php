@@ -552,15 +552,6 @@ function ec_notifications_email_count_unmailed_unread( $user_id ) {
 }
 
 /**
- * Notification type that carries time-sensitive (event-bound) content.
- *
- * A `show_reminder` is created while a tracked show is upcoming. Once the show
- * passes, an un-read reminder row is stale: its title ("X is tomorrow") is no
- * longer true and must never be surfaced in a digest email.
- */
-const EC_NOTIFICATIONS_REMINDER_TYPE = 'show_reminder';
-
-/**
  * Count a user's unread `show_reminder` notifications whose event has passed.
  *
  * Loads only the unread reminder rows (a small set — one per tracked upcoming
@@ -588,7 +579,7 @@ function ec_notifications_email_count_stale_unread_reminders( $user_id ) {
 		$wpdb->prepare(
 			"SELECT item_id FROM {$table} WHERE user_id = %d AND is_read = 0 AND type = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from trusted helper.
 			$user_id,
-			EC_NOTIFICATIONS_REMINDER_TYPE
+			EC_USERS_SHOW_REMINDER_TYPE
 		),
 		ARRAY_A
 	);
@@ -621,7 +612,7 @@ function ec_notifications_email_filter_stale_reminders( array $notifications ) {
 
 	foreach ( $notifications as $note ) {
 		$type = isset( $note['type'] ) ? (string) $note['type'] : '';
-		if ( EC_NOTIFICATIONS_REMINDER_TYPE === $type ) {
+		if ( EC_USERS_SHOW_REMINDER_TYPE === $type ) {
 			$event_id = isset( $note['item_id'] ) ? (int) $note['item_id'] : 0;
 			if ( $event_id > 0 && ec_notifications_email_reminder_is_stale( $event_id ) ) {
 				continue;
