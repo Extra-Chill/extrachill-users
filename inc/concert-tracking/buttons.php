@@ -29,33 +29,35 @@ defined( 'ABSPATH' ) || exit;
  * (extrachill-events). This renderer only exposes the presentation variants and
  * framing hooks the composition layer can arrange.
  *
- * Back-compat contract: calling with just $event_id (as extrachill-events does
- * today) produces byte-for-byte the same output as before this became
- * variant-aware. New behavior is opt-in via $variant / $args.
+ * All presentation/framing options travel in a single $args config array so the
+ * composition layer selects the variant and overrides copy in one place. An
+ * empty $args renders the standard inline toggle — that's the sensible default
+ * for the primary call path, not a compatibility shim.
  *
- * @param int    $event_id Event post ID.
- * @param string $variant  Optional presentation variant. Supported values:
- *                         'default' (or '') — the standard inline attendance
- *                         toggle; 'past-hero' — an attendance-first "hero"
- *                         presentation with archive payoff framing, intended
- *                         for the peak "I was at this show" past-event audience.
- * @param array  $args     Optional framing overrides. Recognised keys:
- *                         - 'hero_heading'      (string) Hero title copy. Only
- *                           used by the 'past-hero' variant.
- *                         - 'hero_subheading'   (string) Hero payoff copy. Only
- *                           used by the 'past-hero' variant.
- *                         - 'logged_out_heading'  (string) Signup-framed title
- *                           shown to logged-out visitors (composition can frame
- *                           this as "build your concert archive" instead of a
- *                           generic login wall).
- *                         - 'logged_out_subheading' (string) Signup-framed
- *                           sub-copy for logged-out visitors.
- *                         - 'redirect_to'       (string) URL to return the user
- *                           to after login/signup. Defaults to the current
- *                           request URL (JS resolves this at click time when
- *                           omitted).
+ * @param int   $event_id Event post ID.
+ * @param array $args     Presentation + framing config. Recognised keys:
+ *                       - 'variant' (string) Presentation variant. Supported:
+ *                         'default' (or omitted) — the standard inline
+ *                         attendance toggle; 'past-hero' — an attendance-first
+ *                         "hero" presentation with archive payoff framing,
+ *                         intended for the peak "I was at this show" past-event
+ *                         audience.
+ *                       - 'hero_heading'      (string) Hero title copy. Only
+ *                         used by the 'past-hero' variant.
+ *                       - 'hero_subheading'   (string) Hero payoff copy. Only
+ *                         used by the 'past-hero' variant.
+ *                       - 'logged_out_heading'  (string) Signup-framed title
+ *                         shown to logged-out visitors (composition can frame
+ *                         this as "build your concert archive" instead of a
+ *                         generic login wall).
+ *                       - 'logged_out_subheading' (string) Signup-framed
+ *                         sub-copy for logged-out visitors.
+ *                       - 'redirect_to'       (string) URL to return the user
+ *                         to after login/signup. Defaults to the current
+ *                         request URL (JS resolves this at click time when
+ *                         omitted).
  */
-function ec_users_render_attendance_button( int $event_id, string $variant = '', array $args = array() ) {
+function ec_users_render_attendance_button( int $event_id, array $args = array() ) {
 	$blog_id = get_current_blog_id();
 	$timing  = ec_users_get_event_timing( $event_id );
 	$count   = ec_users_get_event_mark_count( $event_id, $blog_id );
@@ -91,10 +93,12 @@ function ec_users_render_attendance_button( int $event_id, string $variant = '',
 	$button_class = $is_marked ? 'button-2' : 'button-3';
 	$marked_class = $is_marked ? ' ec-attendance--marked' : '';
 
-	$variant = '' === $variant ? 'default' : $variant;
+	$variant = isset( $args['variant'] ) && '' !== $args['variant']
+		? (string) $args['variant']
+		: 'default';
 
 	// 'past-hero' wraps the standard mount in an attendance-first presentation
-	// with archive payoff framing. The inner mount markup is IDENTICAL to the
+	// with archive payoff framing. The inner mount markup is the same as the
 	// default path so the same React component (#ec-attendance-root) hydrates it
 	// unchanged — only the surrounding presentation/copy differs.
 	$is_hero = ( 'past-hero' === $variant );
@@ -144,7 +148,7 @@ function ec_users_render_attendance_button( int $event_id, string $variant = '',
 		return;
 	}
 
-	// Default variant — byte-for-byte identical to the pre-variant output.
+	// Default variant — the standard inline attendance toggle.
 	ec_users_render_attendance_mount(
 		$event_id,
 		$blog_id,
@@ -166,10 +170,9 @@ function ec_users_render_attendance_button( int $event_id, string $variant = '',
  * Render the attendance mount root (first-paint markup + React hydration hook).
  *
  * Extracted from ec_users_render_attendance_button() so every presentation
- * variant shares one canonical mount. The default variant's output is
- * byte-for-byte identical to the pre-variant markup — the only optional
- * addition is a data-redirect-to attribute, emitted solely when a caller passes
- * an explicit redirect override (so the default call site's markup is unchanged).
+ * variant shares one canonical mount. A data-redirect-to attribute is emitted
+ * only when a caller passes an explicit redirect override; otherwise the React
+ * component falls back to the current request URL at click time.
  *
  * @param int    $event_id     Event post ID.
  * @param int    $blog_id      Blog ID.
