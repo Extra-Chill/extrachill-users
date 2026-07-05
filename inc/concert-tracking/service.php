@@ -235,6 +235,69 @@ function ec_users_get_user_event_count( int $user_id, int $blog_id = 0 ): int {
 	);
 }
 
+// ─── Dated Contributions ─────────────────────────────────────────────────────
+
+/**
+ * Get a user's concert check-ins grouped by calendar day (site timezone).
+ *
+ * Supplies the DATED concert-attendance data for the contribution-events seam
+ * (ec_contribution_events). The tracking table stores `created_at` as UTC; we
+ * convert each timestamp to the site timezone before grouping so day boundaries
+ * match how users perceive "today." Volume is low (a user's lifetime check-ins),
+ * so PHP grouping over a single-column SELECT is simpler and more robust than a
+ * MySQL CONVERT_TZ GROUP BY (which depends on timezone tables being loaded).
+ *
+ * Sibling to ec_users_get_user_event_count() (the scalar total). Returns one
+ * row per day with a count; the caller (the concert contribution-events hook)
+ * shapes these into ec_contribution_events records.
+ *
+ * @param int $user_id User ID.
+ * @return array<int, array{date:string,count:int}>
+ */
+function ec_users_get_user_dated_event_checks( int $user_id ): array {
+	global $wpdb;
+
+	$table = extrachill_users_concert_tracking_table_name();
+
+	$raw = $wpdb->get_col(
+		$wpdb->prepare(
+			"SELECT created_at FROM {$table} WHERE user_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from trusted helper.
+			$user_id
+		)
+	);
+
+	if ( ! is_array( $raw ) || empty( $raw ) ) {
+		return array();
+	}
+
+	$timezone = wp_timezone();
+	$by_date  = array();
+
+	foreach ( $raw as $mysql_dt ) {
+		try {
+			$dt = new DateTime( $mysql_dt, new DateTimeZone( 'UTC' ) );
+		} catch ( Exception $e ) {
+			continue;
+		}
+		$dt->setTimezone( $timezone );
+		$day = $dt->format( 'Y-m-d' );
+		if ( ! isset( $by_date[ $day ] ) ) {
+			$by_date[ $day ] = 0;
+		}
+		++$by_date[ $day ];
+	}
+
+	$out = array();
+	foreach ( $by_date as $day => $count ) {
+		$out[] = array(
+			'date'  => $day,
+			'count' => $count,
+		);
+	}
+
+	return $out;
+}
+
 // ─── Event Timing ────────────────────────────────────────────────────────────
 
 /**
