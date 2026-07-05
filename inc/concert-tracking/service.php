@@ -238,21 +238,18 @@ function ec_users_get_user_event_count( int $user_id, int $blog_id = 0 ): int {
 // ─── Dated Contributions ─────────────────────────────────────────────────────
 
 /**
- * Get a user's concert check-ins grouped by calendar day (site timezone).
+ * Get a user's concert check-in timestamps (raw UTC).
  *
  * Supplies the DATED concert-attendance data for the contribution-events seam
- * (ec_contribution_events). The tracking table stores `created_at` as UTC; we
- * convert each timestamp to the site timezone before grouping so day boundaries
- * match how users perceive "today." Volume is low (a user's lifetime check-ins),
- * so PHP grouping over a single-column SELECT is simpler and more robust than a
- * MySQL CONVERT_TZ GROUP BY (which depends on timezone tables being loaded).
+ * (ec_contribution_events). Returns the raw `created_at` column (UTC); day
+ * computation + timezone normalization is handled centrally by
+ * ec_bucket_utc_events_by_local_day() in the rank-system seam, so this getter
+ * stays a thin data fetch with no timezone logic.
  *
- * Sibling to ec_users_get_user_event_count() (the scalar total). Returns one
- * row per day with a count; the caller (the concert contribution-events hook)
- * shapes these into ec_contribution_events records.
+ * Sibling to ec_users_get_user_event_count() (the scalar total).
  *
  * @param int $user_id User ID.
- * @return array<int, array{date:string,count:int}>
+ * @return string[] MySQL 'Y-m-d H:i:s' strings in UTC.
  */
 function ec_users_get_user_dated_event_checks( int $user_id ): array {
 	global $wpdb;
@@ -266,36 +263,7 @@ function ec_users_get_user_dated_event_checks( int $user_id ): array {
 		)
 	);
 
-	if ( ! is_array( $raw ) || empty( $raw ) ) {
-		return array();
-	}
-
-	$timezone = wp_timezone();
-	$by_date  = array();
-
-	foreach ( $raw as $mysql_dt ) {
-		try {
-			$dt = new DateTime( $mysql_dt, new DateTimeZone( 'UTC' ) );
-		} catch ( Exception $e ) {
-			continue;
-		}
-		$dt->setTimezone( $timezone );
-		$day = $dt->format( 'Y-m-d' );
-		if ( ! isset( $by_date[ $day ] ) ) {
-			$by_date[ $day ] = 0;
-		}
-		++$by_date[ $day ];
-	}
-
-	$out = array();
-	foreach ( $by_date as $day => $count ) {
-		$out[] = array(
-			'date'  => $day,
-			'count' => $count,
-		);
-	}
-
-	return $out;
+	return is_array( $raw ) ? $raw : array();
 }
 
 // ─── Event Timing ────────────────────────────────────────────────────────────

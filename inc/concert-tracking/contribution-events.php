@@ -7,9 +7,10 @@
  * DATED concert check-in events (via ec_contribution_events) so the heatmap
  * (extrachill-community#147) can show concert attendance on a calendar grid.
  *
- * Source: the ec_concert_tracking table, which has `created_at` (the timestamp
- * the user marked the event) indexed on (user_id, created_at). We aggregate
- * check-ins per calendar day via ec_users_get_user_dated_event_checks().
+ * Source: the ec_concert_tracking table, which stores `created_at` as UTC.
+ * Day computation + timezone normalization is delegated to the shared
+ * ec_bucket_utc_events_by_local_day() helper in the rank-system seam — this
+ * contributor never reasons about timezones.
  *
  * @package ExtraChill\Users
  */
@@ -19,10 +20,9 @@ defined( 'ABSPATH' ) || exit;
 /**
  * Contribute dated concert check-in events.
  *
- * Returns one aggregated row per day the user marked a concert (concert
- * check-ins are low-volume — typically dozens, not thousands — so the full
- * history is returned and the engine's defensive since-window filter handles
- * truncation).
+ * SELECTs the raw `created_at` UTC column and delegates to
+ * ec_bucket_utc_events_by_local_day(), which handles the UTC→site-local day
+ * conversion AND the since_ymd window uniformly.
  *
  * @param array  $events    Running event list.
  * @param int    $user_id   WordPress user ID.
@@ -30,22 +30,23 @@ defined( 'ABSPATH' ) || exit;
  * @return array
  */
 function ec_users_concert_contribution_events( $events, $user_id, $since_ymd ) {
-	unset( $since_ymd ); // Engine applies the defensive date filter; we return all history.
-
 	if ( ! function_exists( 'ec_users_get_user_dated_event_checks' ) ) {
 		return $events;
 	}
 
-	$rows = ec_users_get_user_dated_event_checks( (int) $user_id );
-
-	foreach ( $rows as $row ) {
-		$events[] = array(
-			'date'  => $row['date'],
-			'type'  => 'concert',
-			'count' => $row['count'],
-		);
+	if ( ! function_exists( 'ec_bucket_utc_events_by_local_day' ) ) {
+		return $events;
 	}
 
-	return $events;
+	$utc_timestamps = ec_users_get_user_dated_event_checks( (int) $user_id );
+
+	if ( empty( $utc_timestamps ) ) {
+		return $events;
+	}
+
+	return array_merge(
+		$events,
+		ec_bucket_utc_events_by_local_day( $utc_timestamps, 'concert', $since_ymd )
+	);
 }
 add_filter( 'ec_contribution_events', 'ec_users_concert_contribution_events', 10, 3 );

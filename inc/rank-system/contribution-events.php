@@ -7,29 +7,82 @@
  * day+type+count — so a consumer (e.g. the contribution heatmap,
  * extrachill-community#147) can bucket activity per calendar day.
  *
- * Sources that bear a timestamp hook `ec_contribution_events` and return
- * aggregated per-day rows. Sources without a timestamp trail (scalar counters
- * that have no per-day history) are intentionally excluded — they cannot be
- * dated without a new table, which is out of scope.
+ * Sources that bear a timestamp hook `ec_contribution_events` and return raw
+ * UTC datetime strings. Sources without a timestamp trail (scalar counters that
+ * have no per-day history) are intentionally excluded — they cannot be dated
+ * without a new table, which is out of scope.
  *
- * Event shape (aggregated for efficiency):
+ * Timezone contract (single-helper design): contributors NEVER compute calendar
+ * days themselves. They SELECT the UTC-authoritative timestamp column
+ * (`post_date_gmt`, `created_at`) and hand the raw strings to
+ * `ec_bucket_utc_events_by_local_day()`, which is the ONE place that converts
+ * UTC → site-local calendar day. This makes every source provably consistent
+ * and removes reliance on the drift-prone local `post_date` column.
+ *
+ * Event shape (aggregated per day+type):
  *   array( 'date' => 'YYYY-MM-DD', 'type' => '<source-key>', 'count' => int )
- *
- * Aggregation rationale: a prolific author may have thousands of contributions;
- * returning one row per contribution would make the payload and the per-day
- * GROUP BY prohibitively large. Contributors aggregate server-side (SQL
- * GROUP BY DATE(...)) and return one row per day+type. The consumer sums
- * `count` per date.
- *
- * Timezone: dates are calendar days in the site timezone
- * (wp_timezone() / America/New_York) so day boundaries match how users
- * perceive "today."
  *
  * @package ExtraChill\Users
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
+}
+
+/**
+ * Bucket a list of UTC datetime strings into per-day counts in the site timezone.
+ *
+ * The single, canonical UTC→site-local calendar-day conversion for ALL dated
+ * contribution sources. Contributors return raw UTC timestamps; this is the one
+ * place that decides "what local calendar day" — so every source is provably
+ * consistent and no contributor reasons about timezones.
+ *
+ * Also applies the `since_ymd` lower bound (site-local date), so every source
+ * that routes through this helper honors the window uniformly.
+ *
+ * @param string[] $utc_datetimes MySQL 'Y-m-d H:i:s' strings in UTC.
+ * @param string   $type          Opaque source key stamped on each row.
+ * @param string   $since_ymd     Inclusive site-local lower bound (YYYY-MM-DD),
+ *                                or '' for all history.
+ * @return array<int, array{date:string,type:string,count:int}>
+ */
+function ec_bucket_utc_events_by_local_day( array $utc_datetimes, $type, $since_ymd = '' ) {
+	$tz       = wp_timezone();
+	$utc_tz   = new DateTimeZone( 'UTC' );
+	$by_date  = array();
+
+	foreach ( $utc_datetimes as $dt_str ) {
+		try {
+			$dt = new DateTime( $dt_str, $utc_tz );
+		} catch ( Exception $e ) {
+			continue;
+		}
+		$dt->setTimezone( $tz );
+		$day = $dt->format( 'Y-m-d' );
+
+		// Authoritative since-window filter (site-local date comparison).
+		if ( '' !== $since_ymd && $day < $since_ymd ) {
+			continue;
+		}
+
+		if ( ! isset( $by_date[ $day ] ) ) {
+			$by_date[ $day ] = 0;
+		}
+		++$by_date[ $day ];
+	}
+
+	ksort( $by_date );
+
+	$out = array();
+	foreach ( $by_date as $day => $count ) {
+		$out[] = array(
+			'date'  => $day,
+			'type'  => (string) $type,
+			'count' => (int) $count,
+		);
+	}
+
+	return $out;
 }
 
 /**
@@ -51,8 +104,10 @@ function ec_get_contribution_events( $user_id, $since_ymd = '' ) {
 	 * Each source returns an array of aggregated rows:
 	 *   array( 'date' => 'YYYY-MM-DD', 'type' => string, 'count' => int )
 	 *
-	 * `date` is a calendar day in the site timezone. `type` is an opaque
-	 * source identifier (the engine does not inspect it). `count` is the
+	 * Contributors SHOULD build their rows via
+	 * `ec_bucket_utc_events_by_local_day()` so timezone conversion is
+	 * centralized. `date` is a calendar day in the site timezone. `type` is an
+	 * opaque source identifier (the engine does not inspect it). `count` is the
 	 * number of contributions of that type on that date.
 	 *
 	 * Sources without per-day timestamps (e.g. scalar counters) MUST NOT
@@ -64,7 +119,9 @@ function ec_get_contribution_events( $user_id, $since_ymd = '' ) {
 	 */
 	$events = (array) apply_filters( 'ec_contribution_events', array(), (int) $user_id, (string) $since_ymd );
 
-	// Normalize: enforce shape, apply defensive date-window filter.
+	// Lightweight shape-guard: enforce structure + valid values. The
+	// since-window filtering is authoritative in the helper; this is a
+	// defensive backstop for any contributor that doesn't route through it.
 	$clean = array();
 	foreach ( $events as $event ) {
 		if ( ! is_array( $event ) ) {
@@ -79,8 +136,6 @@ function ec_get_contribution_events( $user_id, $since_ymd = '' ) {
 			continue;
 		}
 
-		// Respect the since-window when provided (defensive backstop —
-		// contributors should also SQL-filter for efficiency).
 		if ( '' !== $since_ymd && $date < $since_ymd ) {
 			continue;
 		}
@@ -102,6 +157,9 @@ function ec_get_contribution_events( $user_id, $since_ymd = '' ) {
  * site. Network-level source owned by the engine (mirrors the scalar
  * `main_posts` source in points-engine.php). Hooks `ec_contribution_events`.
  *
+ * Reads `post_date_gmt` (the UTC-authoritative column) and delegates day
+ * computation to `ec_bucket_utc_events_by_local_day()`. Hooks `ec_contribution_events`.
+ *
  * @param array  $events    Running event list.
  * @param int    $user_id   WordPress user ID.
  * @param string $since_ymd Inclusive start date (YYYY-MM-DD), or '' for all.
@@ -117,50 +175,26 @@ function ec_users_main_posts_contribution_events( $events, $user_id, $since_ymd 
 
 	switch_to_blog( $main_blog_id );
 	try {
-		// Aggregate published posts per calendar day for this author.
-		// DATE(post_date) yields site-local calendar days (WP stores post_date
-		// in site-local time for posts created via the WP API).
-		if ( '' !== $since_ymd ) {
-			// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- no interpolation; prepared statement.
-			$rows = $wpdb->get_results(
-				$wpdb->prepare(
-					"SELECT DATE(post_date) AS d, COUNT(*) AS c
-					 FROM {$wpdb->posts}
-					 WHERE post_author = %d AND post_type = 'post' AND post_status = 'publish'
-					   AND DATE(post_date) >= %s
-					 GROUP BY d",
-					$user_id,
-					$since_ymd
-				),
-				ARRAY_A
-			);
-			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		} else {
-			$rows = $wpdb->get_results(
-				$wpdb->prepare(
-					"SELECT DATE(post_date) AS d, COUNT(*) AS c
-					 FROM {$wpdb->posts}
-					 WHERE post_author = %d AND post_type = 'post' AND post_status = 'publish'
-					 GROUP BY d",
-					$user_id
-				),
-				ARRAY_A
-			);
-		}
+		// SELECT the UTC-authoritative column; day computation is centralized
+		// in ec_bucket_utc_events_by_local_day(). A prolific author may have
+		// thousands of rows — that's trivial for PHP bucketing.
+		$rows = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT post_date_gmt
+				 FROM {$wpdb->posts}
+				 WHERE post_author = %d AND post_type = 'post' AND post_status = 'publish'",
+				$user_id
+			)
+		);
 	} finally {
+		// Always restore blog context, even on exception.
 		restore_current_blog();
 	}
 
-	if ( is_array( $rows ) ) {
-		foreach ( $rows as $row ) {
-			$events[] = array(
-				'date'  => (string) $row['d'],
-				'type'  => 'post',
-				'count' => (int) $row['c'],
-			);
-		}
+	if ( ! is_array( $rows ) || empty( $rows ) ) {
+		return $events;
 	}
 
-	return $events;
+	return array_merge( $events, ec_bucket_utc_events_by_local_day( $rows, 'post', $since_ymd ) );
 }
 add_filter( 'ec_contribution_events', 'ec_users_main_posts_contribution_events', 10, 3 );
