@@ -6,80 +6,72 @@
  */
 
 /**
- * Verify account settings persist and resolve canonical event locations.
+ * Verify account settings delegate canonical event location resolution.
  */
 class Test_User_Settings_Default_Event_Location extends WP_UnitTestCase {
 
 	/**
-	 * Events site blog ID.
-	 *
-	 * @var int
-	 */
-	private int $events_blog_id;
-
-	/**
-	 * Create a hierarchical event location fixture.
+	 * Register a controllable canonical location Ability.
 	 */
 	protected function setUp(): void {
 		parent::setUp();
 
-		$this->events_blog_id                    = self::factory()->blog->create();
-		$GLOBALS['ec_users_test_events_blog_id'] = $this->events_blog_id;
-		add_filter(
-			'extrachill_users_events_blog_id',
-			static function () {
-				return $GLOBALS['ec_users_test_events_blog_id'];
-			}
-		);
-
-		if ( ! function_exists( 'ec_get_blog_id' ) ) {
-			/**
-			 * Resolve the test events site.
-			 *
-			 * @param string $site Site key.
-			 * @return int Blog ID.
-			 */
-			function ec_get_blog_id( $site ) {
-				return 'events' === $site ? $GLOBALS['ec_users_test_events_blog_id'] : 0;
-			}
+		$GLOBALS['ec_users_test_location_result'] = null;
+		if ( ! wp_get_ability( 'extrachill/events-locations' ) ) {
+			wp_register_ability(
+				'extrachill/events-locations',
+				array(
+					'label'               => 'Test Event Locations',
+					'description'         => 'Test resolver.',
+					'category'            => 'extrachill-users',
+					'input_schema'        => array( 'type' => 'object' ),
+					'output_schema'       => array( 'type' => 'object' ),
+					'permission_callback' => '__return_true',
+					'execute_callback'    => static function ( $input ) {
+						$GLOBALS['ec_users_test_location_input'] = $input;
+						return $GLOBALS['ec_users_test_location_result'];
+					},
+				)
+			);
 		}
-
-		switch_to_blog( $this->events_blog_id );
-		register_taxonomy( 'location', 'post', array( 'hierarchical' => true ) );
-		$country = wp_insert_term( 'United States', 'location', array( 'slug' => 'usa' ) );
-		$state   = wp_insert_term(
-			'South Carolina',
-			'location',
-			array(
-				'slug'   => 'south-carolina',
-				'parent' => $country['term_id'],
-			)
-		);
-		$city    = wp_insert_term(
-			'Charleston',
-			'location',
-			array(
-				'slug'   => 'charleston',
-				'parent' => $state['term_id'],
-			)
-		);
-		update_term_meta( $city['term_id'], '_location_coordinates', '32.7765,-79.9311' );
-		restore_current_blog();
 	}
 
 	/**
-	 * A city slug resolves on write and an empty string clears it.
+	 * A canonical result is returned unchanged and an empty string clears it.
 	 */
-	public function test_update_resolves_and_clears_private_default_location(): void {
+	public function test_update_delegates_resolution_and_clears_default_location(): void {
 		$user_id = self::factory()->user->create();
 		wp_set_current_user( $user_id );
-		$original_blog_id = get_current_blog_id();
+		$location                                 = array(
+			'term_id'     => 1618,
+			'name'        => 'Charleston',
+			'slug'        => 'charleston',
+			'archive_url' => 'https://events.example/location/charleston/',
+			'coordinates' => array(
+				'lat' => 32.7765,
+				'lon' => -79.9311,
+			),
+			'hierarchy'   => array(
+				'region' => 'United States',
+				'state'  => 'South Carolina',
+				'label'  => 'Charleston, South Carolina',
+			),
+		);
+		$GLOBALS['ec_users_test_location_result'] = array(
+			'locations' => array(),
+			'location'  => $location,
+		);
 
-		$updated = extrachill_users_ability_update_settings( array( 'default_event_location' => 'charleston' ) );
+		$updated = extrachill_users_ability_update_settings( array( 'default_event_location' => 'Charleston' ) );
 
-		$this->assertSame( $original_blog_id, get_current_blog_id() );
-		$this->assertSame( 'charleston', $updated['default_event_location']['slug'] );
-		$this->assertSame( 32.7765, $updated['default_event_location']['coordinates']['lat'] );
+		$this->assertSame(
+			array(
+				'mode' => 'resolve',
+				'slug' => 'charleston',
+			),
+			$GLOBALS['ec_users_test_location_input']
+		);
+		$this->assertSame( $location, $updated['default_event_location'] );
 		$this->assertSame( 'charleston', get_user_meta( $user_id, EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY, true ) );
 
 		$cleared = extrachill_users_ability_update_settings( array( 'default_event_location' => '' ) );
@@ -88,18 +80,50 @@ class Test_User_Settings_Default_Event_Location extends WP_UnitTestCase {
 	}
 
 	/**
-	 * Country subdivisions and unknown slugs are not valid city defaults.
+	 * Validation errors from the Events domain prevent persistence.
 	 */
-	public function test_update_rejects_non_city_and_unknown_locations(): void {
+	public function test_update_propagates_location_validation_errors(): void {
 		$user_id = self::factory()->user->create();
 		wp_set_current_user( $user_id );
+		$GLOBALS['ec_users_test_location_result'] = new WP_Error( 'location_not_found', 'Not found.', array( 'status' => 404 ) );
 
-		$state = extrachill_users_ability_update_settings( array( 'default_event_location' => 'south-carolina' ) );
-		$this->assertWPError( $state );
-		$this->assertSame( 'invalid_default_event_location', $state->get_error_code() );
+		$result = extrachill_users_ability_update_settings( array( 'default_event_location' => 'nowhere' ) );
 
-		$unknown = extrachill_users_ability_update_settings( array( 'default_event_location' => 'nowhere' ) );
-		$this->assertWPError( $unknown );
-		$this->assertSame( 'invalid_default_event_location', $unknown->get_error_code() );
+		$this->assertWPError( $result );
+		$this->assertSame( 'location_not_found', $result->get_error_code() );
+		$this->assertSame( '', get_user_meta( $user_id, EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY, true ) );
+	}
+
+	/**
+	 * Stored settings fail open when canonical resolution fails.
+	 */
+	public function test_read_returns_null_when_resolution_fails(): void {
+		$user_id = self::factory()->user->create();
+		wp_set_current_user( $user_id );
+		update_user_meta( $user_id, EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY, 'charleston' );
+		$GLOBALS['ec_users_test_location_result'] = new WP_Error( 'events_site_unavailable', 'Unavailable.', array( 'status' => 500 ) );
+
+		$settings = extrachill_users_ability_get_settings();
+
+		$this->assertNull( $settings['default_event_location'] );
+		$this->assertSame( 'charleston', get_user_meta( $user_id, EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY, true ) );
+	}
+
+	/**
+	 * A missing Events Ability fails open for reads and clearly rejects writes.
+	 */
+	public function test_missing_ability_returns_null_on_read_and_error_on_update(): void {
+		$user_id = self::factory()->user->create();
+		wp_set_current_user( $user_id );
+		update_user_meta( $user_id, EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY, 'charleston' );
+		wp_unregister_ability( 'extrachill/events-locations' );
+
+		$settings = extrachill_users_ability_get_settings();
+		$updated  = extrachill_users_ability_update_settings( array( 'default_event_location' => 'savannah' ) );
+
+		$this->assertNull( $settings['default_event_location'] );
+		$this->assertWPError( $updated );
+		$this->assertSame( 'events_locations_unavailable', $updated->get_error_code() );
+		$this->assertSame( 'charleston', get_user_meta( $user_id, EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY, true ) );
 	}
 }

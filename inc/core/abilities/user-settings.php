@@ -293,63 +293,41 @@ function extrachill_users_ability_update_settings( $input ) {
 }
 
 /**
- * Resolve a canonical city-level location in the events site's taxonomy.
+ * Resolve a canonical location through the Events domain's public Ability.
  *
  * @param string $slug Location term slug.
- * @return array|WP_Error Resolved location or validation error.
+ * @return array|WP_Error Resolved location or dependency/validation error.
  */
 function extrachill_users_resolve_default_event_location( string $slug ) {
-	$events_blog_id = function_exists( 'ec_get_blog_id' ) ? (int) ec_get_blog_id( 'events' ) : 0;
-	$events_blog_id = (int) apply_filters( 'extrachill_users_events_blog_id', $events_blog_id );
-	if ( $events_blog_id <= 0 || ! function_exists( 'switch_to_blog' ) ) {
+	$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( 'extrachill/events-locations' ) : null;
+	if ( ! $ability ) {
 		return new WP_Error(
-			'events_site_unavailable',
-			__( 'The events site is unavailable.', 'extrachill-users' ),
-			array( 'status' => 500 )
+			'events_locations_unavailable',
+			__( 'Canonical event locations are currently unavailable.', 'extrachill-users' ),
+			array( 'status' => 503 )
 		);
 	}
 
-	$switched = get_current_blog_id() !== $events_blog_id;
-	if ( $switched ) {
-		switch_to_blog( $events_blog_id );
+	$result = $ability->execute(
+		array(
+			'mode' => 'resolve',
+			'slug' => $slug,
+		)
+	);
+
+	if ( is_wp_error( $result ) ) {
+		return $result;
 	}
 
-	try {
-		$term = get_term_by( 'slug', $slug, 'location' );
-		if ( ! $term || is_wp_error( $term ) || count( get_ancestors( $term->term_id, 'location', 'taxonomy' ) ) < 2 ) {
-			return new WP_Error(
-				'invalid_default_event_location',
-				__( 'Choose a canonical city-level event location.', 'extrachill-users' ),
-				array( 'status' => 400 )
-			);
-		}
-
-		$term_link = get_term_link( $term );
-		$resolved  = array(
-			'slug'        => $term->slug,
-			'name'        => $term->name,
-			'term_id'     => (int) $term->term_id,
-			'url'         => is_wp_error( $term_link ) ? '' : $term_link,
-			'coordinates' => null,
+	if ( ! is_array( $result ) || ! isset( $result['location'] ) || ! is_array( $result['location'] ) ) {
+		return new WP_Error(
+			'events_locations_invalid_response',
+			__( 'Canonical event locations returned an invalid response.', 'extrachill-users' ),
+			array( 'status' => 502 )
 		);
-
-		$coordinates = get_term_meta( $term->term_id, '_location_coordinates', true );
-		if ( is_string( $coordinates ) && str_contains( $coordinates, ',' ) ) {
-			$parts = array_map( 'trim', explode( ',', $coordinates, 2 ) );
-			if ( is_numeric( $parts[0] ) && is_numeric( $parts[1] ) ) {
-				$resolved['coordinates'] = array(
-					'lat' => (float) $parts[0],
-					'lon' => (float) $parts[1],
-				);
-			}
-		}
-
-		return $resolved;
-	} finally {
-		if ( $switched ) {
-			restore_current_blog();
-		}
 	}
+
+	return $result['location'];
 }
 
 /**
