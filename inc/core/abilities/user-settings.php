@@ -12,6 +12,8 @@
 
 defined( 'ABSPATH' ) || exit;
 
+const EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY = '_extrachill_default_event_location';
+
 add_action( 'wp_abilities_api_init', 'extrachill_users_register_settings_abilities' );
 
 /**
@@ -24,7 +26,7 @@ function extrachill_users_register_settings_abilities() {
 		'extrachill/get-user-settings',
 		array(
 			'label'               => __( 'Get User Settings', 'extrachill-users' ),
-			'description'         => __( 'Retrieve account settings for a user: name, display name, email, pending email.', 'extrachill-users' ),
+			'description'         => __( 'Retrieve private account settings for the authenticated user.', 'extrachill-users' ),
 			'category'            => 'extrachill-users',
 			'input_schema'        => array(
 				'type'       => 'object',
@@ -54,9 +56,13 @@ function extrachill_users_register_settings_abilities() {
 			'input_schema'        => array(
 				'type'       => 'object',
 				'properties' => array(
-					'first_name'   => array( 'type' => 'string' ),
-					'last_name'    => array( 'type' => 'string' ),
-					'display_name' => array( 'type' => 'string' ),
+					'first_name'             => array( 'type' => 'string' ),
+					'last_name'              => array( 'type' => 'string' ),
+					'display_name'           => array( 'type' => 'string' ),
+					'default_event_location' => array(
+						'type'        => 'string',
+						'description' => __( 'Canonical events location slug. Pass an empty string to clear it.', 'extrachill-users' ),
+					),
 				),
 			),
 			'output_schema'       => array( 'type' => 'object' ),
@@ -168,21 +174,31 @@ function extrachill_users_ability_get_settings() {
 	$display_name_options = array_unique( array_filter( array_map( 'trim', $display_name_options ) ) );
 
 	// Pending email change — WordPress core uses '_new_email' meta key.
-	// (The old community settings page incorrectly read '_new_user_email'.)
+	// The old community settings page incorrectly read '_new_user_email'.
 	$pending_email      = null;
 	$pending_email_data = get_user_meta( $user_id, '_new_email', true );
 	if ( $pending_email_data && isset( $pending_email_data['newemail'] ) ) {
 		$pending_email = $pending_email_data['newemail'];
 	}
 
+	$default_event_location_slug = (string) get_user_meta( $user_id, EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY, true );
+	$default_event_location      = null;
+	if ( '' !== $default_event_location_slug ) {
+		$default_event_location = extrachill_users_resolve_default_event_location( $default_event_location_slug );
+		if ( is_wp_error( $default_event_location ) ) {
+			$default_event_location = null;
+		}
+	}
+
 	return array(
-		'user_id'              => $user_id,
-		'first_name'           => $user->first_name,
-		'last_name'            => $user->last_name,
-		'display_name'         => $user->display_name,
-		'display_name_options' => array_values( $display_name_options ),
-		'email'                => $user->user_email,
-		'pending_email'        => $pending_email,
+		'user_id'                => $user_id,
+		'first_name'             => $user->first_name,
+		'last_name'              => $user->last_name,
+		'display_name'           => $user->display_name,
+		'display_name_options'   => array_values( $display_name_options ),
+		'email'                  => $user->user_email,
+		'pending_email'          => $pending_email,
+		'default_event_location' => $default_event_location,
 	);
 }
 
@@ -204,8 +220,9 @@ function extrachill_users_ability_update_settings( $input ) {
 		return new WP_Error( 'user_not_found', 'User not found.' );
 	}
 
-	$update_args = array( 'ID' => $user_id );
-	$changed     = false;
+	$update_args            = array( 'ID' => $user_id );
+	$changed                = false;
+	$location_input_present = array_key_exists( 'default_event_location', $input );
 
 	if ( isset( $input['first_name'] ) ) {
 		$first_name = sanitize_text_field( $input['first_name'] );
@@ -231,7 +248,33 @@ function extrachill_users_ability_update_settings( $input ) {
 		}
 	}
 
+	if ( $location_input_present ) {
+		$location_slug = sanitize_title( (string) $input['default_event_location'] );
+		$current_slug  = (string) get_user_meta( $user_id, EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY, true );
+
+		if ( '' === $location_slug ) {
+			if ( '' !== $current_slug ) {
+				delete_user_meta( $user_id, EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY );
+				$changed = true;
+			}
+		} else {
+			$location = extrachill_users_resolve_default_event_location( $location_slug );
+			if ( is_wp_error( $location ) ) {
+				return $location;
+			}
+
+			if ( $location_slug !== $current_slug ) {
+				update_user_meta( $user_id, EXTRACHILL_USERS_DEFAULT_EVENT_LOCATION_META_KEY, $location_slug );
+				$changed = true;
+			}
+		}
+	}
+
 	if ( ! $changed ) {
+		if ( $location_input_present ) {
+			return extrachill_users_ability_get_settings();
+		}
+
 		return array(
 			'success' => true,
 			'message' => 'No changes detected.',
@@ -247,6 +290,66 @@ function extrachill_users_ability_update_settings( $input ) {
 
 	// Return fresh settings data (resolves the same authenticated user).
 	return extrachill_users_ability_get_settings();
+}
+
+/**
+ * Resolve a canonical city-level location in the events site's taxonomy.
+ *
+ * @param string $slug Location term slug.
+ * @return array|WP_Error Resolved location or validation error.
+ */
+function extrachill_users_resolve_default_event_location( string $slug ) {
+	$events_blog_id = function_exists( 'ec_get_blog_id' ) ? (int) ec_get_blog_id( 'events' ) : 0;
+	$events_blog_id = (int) apply_filters( 'extrachill_users_events_blog_id', $events_blog_id );
+	if ( $events_blog_id <= 0 || ! function_exists( 'switch_to_blog' ) ) {
+		return new WP_Error(
+			'events_site_unavailable',
+			__( 'The events site is unavailable.', 'extrachill-users' ),
+			array( 'status' => 500 )
+		);
+	}
+
+	$switched = get_current_blog_id() !== $events_blog_id;
+	if ( $switched ) {
+		switch_to_blog( $events_blog_id );
+	}
+
+	try {
+		$term = get_term_by( 'slug', $slug, 'location' );
+		if ( ! $term || is_wp_error( $term ) || count( get_ancestors( $term->term_id, 'location', 'taxonomy' ) ) < 2 ) {
+			return new WP_Error(
+				'invalid_default_event_location',
+				__( 'Choose a canonical city-level event location.', 'extrachill-users' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$term_link = get_term_link( $term );
+		$resolved  = array(
+			'slug'        => $term->slug,
+			'name'        => $term->name,
+			'term_id'     => (int) $term->term_id,
+			'url'         => is_wp_error( $term_link ) ? '' : $term_link,
+			'coordinates' => null,
+		);
+
+		$coordinates = get_term_meta( $term->term_id, '_location_coordinates', true );
+		if ( is_string( $coordinates ) && str_contains( $coordinates, ',' ) ) {
+			$parts = array_map( 'trim', explode( ',', $coordinates, 2 ) );
+			if ( is_numeric( $parts[0] ) && is_numeric( $parts[1] ) ) {
+				$resolved['coordinates'] = array(
+					'lat' => (float) $parts[0],
+					'lon' => (float) $parts[1],
+				);
+			}
+		}
+
+		return $resolved;
+	} finally {
+		if ( $switched ) {
+			restore_current_blog();
+		}
+	}
 }
 
 /**
