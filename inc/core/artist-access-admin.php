@@ -39,6 +39,10 @@ function extrachill_users_handle_artist_access_action() {
 	$user_id = isset( $_POST['user_id'] ) ? absint( $_POST['user_id'] ) : 0;
 	$action  = isset( $_POST['request_action'] ) ? sanitize_key( wp_unslash( $_POST['request_action'] ) ) : '';
 	$type    = isset( $_POST['type'] ) ? sanitize_key( wp_unslash( $_POST['type'] ) ) : '';
+	if ( ! in_array( $action, array( 'approve', 'reject' ), true ) ) {
+		wp_die( esc_html__( 'Invalid artist access action.', 'extrachill-users' ) );
+	}
+
 	$ability = wp_get_ability( 'approve' === $action ? 'extrachill/approve-artist-access' : 'extrachill/reject-artist-access' );
 	$result  = $ability ? $ability->execute(
 		'approve' === $action ? array(
@@ -69,11 +73,12 @@ function extrachill_users_render_artist_access_page() {
 	$ability  = wp_get_ability( 'extrachill/list-artist-access-requests' );
 	$result   = $ability ? $ability->execute( array() ) : array( 'requests' => array() );
 	$requests = ! is_wp_error( $result ) && isset( $result['requests'] ) ? $result['requests'] : array();
+	$status   = isset( $_GET['status'] ) ? sanitize_key( wp_unslash( $_GET['status'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only redirect flag.
 	?>
 	<div class="wrap">
 		<h1><?php esc_html_e( 'Artist Access Requests', 'extrachill-users' ); ?></h1>
-		<?php if ( isset( $_GET['status'] ) ) : // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only redirect flag. ?>
-			<div class="notice notice-<?php echo 'updated' === $_GET['status'] ? 'success' : 'error'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only redirect flag. ?> is-dismissible"><p><?php esc_html_e( 'Artist access request processed.', 'extrachill-users' ); ?></p></div>
+		<?php if ( $status ) : ?>
+			<div class="notice notice-<?php echo 'updated' === $status ? 'success' : 'error'; ?> is-dismissible"><p><?php esc_html_e( 'Artist access request processed.', 'extrachill-users' ); ?></p></div>
 		<?php endif; ?>
 		<?php if ( empty( $requests ) ) : ?>
 			<p><?php esc_html_e( 'No pending artist access requests.', 'extrachill-users' ); ?></p>
