@@ -11,9 +11,17 @@ class Test_Login_Continuation extends WP_UnitTestCase {
 	 */
 	private $original_server;
 
+	/**
+	 * Original request query state.
+	 *
+	 * @var array<string, mixed>
+	 */
+	private $original_get;
+
 	protected function setUp(): void {
 		parent::setUp();
 		$this->original_server = $_SERVER;
+		$this->original_get    = $_GET;
 		require_once dirname( __DIR__, 2 ) . '/inc/oauth/google-canonical-origin.php';
 	}
 
@@ -207,8 +215,8 @@ class Test_Login_Continuation extends WP_UnitTestCase {
 	}
 
 	protected function tearDown(): void {
-		unset( $_GET['redirect_to'], $_GET[ EC_USERS_GOOGLE_REDIRECT_PARAM ] );
 		$_SERVER = $this->original_server;
+		$_GET    = $this->original_get;
 		parent::tearDown();
 	}
 }

@@ -51,8 +51,39 @@ function flushPromises() {
 
 describe( 'login continuation requests', () => {
 	let credentialCallback;
+	let originalGlobals;
+
+	function restoreProperty( target, property, original ) {
+		if ( original.exists ) {
+			target[ property ] = original.value;
+		} else {
+			delete target[ property ];
+		}
+	}
 
 	beforeEach( () => {
+		originalGlobals = {
+			actEnvironment: {
+				exists: Object.prototype.hasOwnProperty.call( global, 'IS_REACT_ACT_ENVIRONMENT' ),
+				value: global.IS_REACT_ACT_ENVIRONMENT,
+			},
+			authUtils: {
+				exists: Object.prototype.hasOwnProperty.call( window, 'ECAuthUtils' ),
+				value: window.ECAuthUtils,
+			},
+			googleSignIn: {
+				exists: Object.prototype.hasOwnProperty.call( window, 'ECGoogleSignIn' ),
+				value: window.ECGoogleSignIn,
+			},
+			google: {
+				exists: Object.prototype.hasOwnProperty.call( global, 'google' ),
+				value: global.google,
+			},
+			fetch: {
+				exists: Object.prototype.hasOwnProperty.call( global, 'fetch' ),
+				value: global.fetch,
+			},
+		};
 		global.IS_REACT_ACT_ENVIRONMENT = true;
 		document.body.innerHTML = '';
 		window.ECAuthUtils = {
@@ -76,11 +107,11 @@ describe( 'login continuation requests', () => {
 	} );
 
 	afterEach( () => {
-		delete global.IS_REACT_ACT_ENVIRONMENT;
-		delete window.ECGoogleSignIn;
-		delete window.ECAuthUtils;
-		delete global.google;
-		delete global.fetch;
+		restoreProperty( global, 'IS_REACT_ACT_ENVIRONMENT', originalGlobals.actEnvironment );
+		restoreProperty( window, 'ECGoogleSignIn', originalGlobals.googleSignIn );
+		restoreProperty( window, 'ECAuthUtils', originalGlobals.authUtils );
+		restoreProperty( global, 'google', originalGlobals.google );
+		restoreProperty( global, 'fetch', originalGlobals.fetch );
 	} );
 
 	test( 'default Login tab exposes one resolved continuation to password and Google flows', () => {
