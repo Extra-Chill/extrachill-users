@@ -67,6 +67,12 @@ class Test_Login_Continuation extends WP_UnitTestCase {
 		$this->assertNull( ec_users_get_validated_login_redirect_from_request() );
 	}
 
+	public function test_relative_redirect_is_rejected(): void {
+		$_GET['redirect_to'] = '/my-shows/';
+
+		$this->assertNull( ec_users_get_validated_login_redirect_from_request() );
+	}
+
 	public function test_missing_continuation_returns_null(): void {
 		unset( $_GET['redirect_to'] );
 
