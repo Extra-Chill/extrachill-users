@@ -4,9 +4,16 @@
  */
 
 class Test_Login_Continuation extends WP_UnitTestCase {
+	/**
+	 * Original request server state.
+	 *
+	 * @var array<string, mixed>
+	 */
+	private $original_server;
 
 	protected function setUp(): void {
 		parent::setUp();
+		$this->original_server = $_SERVER;
 		require_once dirname( __DIR__, 2 ) . '/inc/oauth/google-canonical-origin.php';
 	}
 
@@ -133,23 +140,48 @@ class Test_Login_Continuation extends WP_UnitTestCase {
 		$this->assertSame( $attendance_url, $custom_login_query['redirect_to'] ?? '' );
 	}
 
-	public function test_standard_registration_two_factor_and_google_flows_consume_the_resolved_continuation(): void {
-		$root   = dirname( __DIR__, 2 );
-		$render = file_get_contents( $root . '/blocks/login-register/render.php' );
-		$view   = file_get_contents( $root . '/blocks/login-register/view.js' );
-		$google = file_get_contents( $root . '/assets/js/google-signin.js' );
-		$tokens = file_get_contents( $root . '/inc/auth-tokens/service.php' );
+	public function test_noncanonical_google_handoff_carries_the_resolved_request_continuation(): void {
+		$request_redirect    = 'https://community.extrachill.com/?compose=discussion&entity_taxonomy=artist&entity_slug=kid-lake';
+		$_GET['redirect_to'] = $request_redirect;
 
-		$this->assertStringContainsString( 'ec_users_resolve_login_block_redirect( $block_redirect_url, $current_url )', $render );
-		$this->assertStringContainsString( 'ec_users_canonical_google_signin_url( $success_redirect )', $render );
-		$this->assertStringContainsString( 'name="redirect_to" value={ config.loginRedirectUrl }', $view );
-		$this->assertStringContainsString( 'redirect_to: redirectTo', $view );
-		$this->assertStringContainsString( 'name="success_redirect_url" value={ config.successRedirectUrl }', $view );
-		$this->assertStringContainsString( 'success_redirect_url: config.successRedirectUrl', $view );
-		$this->assertStringContainsString( 'data?.redirect_url || config.loginRedirectUrl', $view );
-		$this->assertStringContainsString( 'success_redirect_url: successRedirectUrl', $google );
-		$this->assertStringContainsString( 'extrachill_users_maybe_handle_two_factor( $identifier, $password, $remember, $safe_redirect_to )', $tokens );
-		$this->assertStringContainsString( "'redirect_to'   => \$redirect_to ? \$redirect_to : home_url()", $tokens );
+		$resolved   = ec_users_resolve_login_block_redirect(
+			'https://events.extrachill.com/',
+			'https://events.extrachill.com/login/'
+		);
+		$google_url = ec_users_canonical_google_signin_url( $resolved );
+		parse_str( (string) wp_parse_url( $google_url, PHP_URL_QUERY ), $query );
+		$this->assertSame( $request_redirect, $query[ EC_USERS_GOOGLE_REDIRECT_PARAM ] ?? '' );
+	}
+
+	/**
+	 * The token login service must carry its validated destination into the
+	 * Two Factor plugin's challenge state.
+	 *
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
+	public function test_two_factor_challenge_carries_the_validated_login_continuation(): void {
+		if ( class_exists( 'Two_Factor_Core' ) ) {
+			$this->markTestSkipped( 'Test requires the isolated Two_Factor_Core stub.' );
+		}
+
+		eval(
+			'class Two_Factor_Core {' .
+			'public static function is_user_using_two_factor( $user_id ) { return true; }' .
+			'public static function create_login_nonce( $user_id ) { return array( "key" => "test-2fa-nonce" ); }' .
+			'}'
+		);
+
+		$password     = 'valid-password';
+		$user_id      = self::factory()->user->create( array( 'user_pass' => $password ) );
+		$user         = get_user_by( 'id', $user_id );
+		$continuation = 'https://community.extrachill.com/?compose=discussion&entity_taxonomy=artist&entity_slug=kid-lake';
+		$result       = extrachill_users_maybe_handle_two_factor( $user->user_login, $password, true, $continuation );
+
+		$this->assertIsArray( $result );
+		$this->assertTrue( $result['requires_2fa'] );
+		parse_str( (string) wp_parse_url( $result['redirect_url'], PHP_URL_QUERY ), $query );
+		$this->assertSame( $continuation, $query['redirect_to'] ?? '' );
 	}
 
 	/**
@@ -176,6 +208,7 @@ class Test_Login_Continuation extends WP_UnitTestCase {
 
 	protected function tearDown(): void {
 		unset( $_GET['redirect_to'], $_GET[ EC_USERS_GOOGLE_REDIRECT_PARAM ] );
+		$_SERVER = $this->original_server;
 		parent::tearDown();
 	}
 }
