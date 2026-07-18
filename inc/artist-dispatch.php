@@ -238,6 +238,8 @@ function ec_users_write_artist_dispatch_state( $user_id, array $next, array $cur
  */
 function ec_users_acquire_artist_dispatch_lock( $user_id, $request_id ) {
 	$user_id = absint( $user_id );
+	$key     = EC_USERS_ARTIST_DISPATCH_LOCK_META . '_' . $user_id;
+	$blog_id                      = ec_users_get_artist_dispatch_blog_id();
 	for ( $attempt = 0; 5 > $attempt; ++$attempt ) {
 		$now  = time();
 		$lock = array(
@@ -245,13 +247,18 @@ function ec_users_acquire_artist_dispatch_lock( $user_id, $request_id ) {
 			'request_id'  => sanitize_text_field( $request_id ),
 			'expires_at'  => $now + EC_USERS_ARTIST_DISPATCH_LOCK_TTL,
 		);
-		if ( false !== add_user_meta( $user_id, EC_USERS_ARTIST_DISPATCH_LOCK_META, $lock, true ) ) {
+		switch_to_blog( $blog_id );
+		$acquired = ec_users_add_artist_dispatch_option_once( $key, $lock );
+		restore_current_blog();
+		if ( $acquired ) {
 			return $lock;
 		}
 
-		$current = get_user_meta( $user_id, EC_USERS_ARTIST_DISPATCH_LOCK_META, true );
-		if ( is_array( $current ) && $now >= (int) ( $current['expires_at'] ?? 0 ) && false !== update_user_meta( $user_id, EC_USERS_ARTIST_DISPATCH_LOCK_META, $lock, $current ) ) {
-			return $lock;
+		switch_to_blog( $blog_id );
+		$current = get_option( $key, array() );
+		restore_current_blog();
+		if ( is_array( $current ) && $now >= (int) ( $current['expires_at'] ?? 0 ) ) {
+			return new WP_Error( 'artist_dispatch_lock_reconciliation_required', __( 'A prior Artist Dispatch update exceeded its lock window and requires reconciliation.', 'extrachill-users' ), array( 'status' => 409 ) );
 		}
 		usleep( 50000 );
 	}
@@ -267,7 +274,63 @@ function ec_users_acquire_artist_dispatch_lock( $user_id, $request_id ) {
  * @return bool
  */
 function ec_users_release_artist_dispatch_lock( $user_id, array $lock ) {
-	return delete_user_meta( absint( $user_id ), EC_USERS_ARTIST_DISPATCH_LOCK_META, $lock );
+	$blog_id = ec_users_get_artist_dispatch_blog_id();
+	$key     = EC_USERS_ARTIST_DISPATCH_LOCK_META . '_' . absint( $user_id );
+	switch_to_blog( $blog_id );
+	try {
+		return ec_users_delete_artist_dispatch_option_if_value( $key, $lock );
+	} finally {
+		restore_current_blog();
+	}
+}
+
+/**
+ * Atomically delete an option only when its serialized value still matches.
+ *
+ * @param string $key      Option name.
+ * @param array  $expected Expected current value.
+ * @return bool
+ */
+function ec_users_delete_artist_dispatch_option_if_value( $key, array $expected ) {
+	global $wpdb;
+
+	$deleted = $wpdb->query(
+		$wpdb->prepare(
+			"DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Core-owned options table name.
+			$key,
+			maybe_serialize( $expected )
+		)
+	);
+	if ( $deleted ) {
+		wp_cache_delete( $key, 'options' );
+		wp_cache_delete( 'alloptions', 'options' );
+	}
+	return 1 === $deleted;
+}
+
+/**
+ * Atomically reserve a unique option key without core's overwrite-on-conflict upsert.
+ *
+ * @param string $key   Option name.
+ * @param array  $value Option value.
+ * @return bool
+ */
+function ec_users_add_artist_dispatch_option_once( $key, array $value ) {
+	global $wpdb;
+
+	$inserted = $wpdb->query(
+		$wpdb->prepare(
+			"INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'off')", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Core-owned options table name; the unique option key is the lock primitive.
+			$key,
+			maybe_serialize( $value )
+		)
+	);
+	if ( 1 === $inserted ) {
+		wp_cache_delete( $key, 'options' );
+		wp_cache_delete( 'notoptions', 'options' );
+		return true;
+	}
+	return false;
 }
 
 /**
@@ -359,12 +422,39 @@ function ec_users_get_artist_dispatch_analytics_event( $event_type ) {
  * @return bool
  */
 function ec_users_has_artist_dispatch_delivery_receipt( $user_id, $channel, $event_type, $request_id ) {
-	foreach ( get_user_meta( $user_id, EC_USERS_ARTIST_DISPATCH_DELIVERY_META, false ) as $receipt ) {
-		if ( is_array( $receipt ) && ( $receipt['channel'] ?? '' ) === $channel && ( $receipt['event'] ?? '' ) === $event_type && ( $receipt['request_id'] ?? '' ) === $request_id ) {
-			return true;
-		}
+	return ! empty( ec_users_get_artist_dispatch_delivery_receipt( $user_id, $channel, $event_type, $request_id ) );
+}
+
+/**
+ * Build the unique user-meta key for one external delivery.
+ *
+ * @param string $channel    Delivery channel.
+ * @param string $event_type Lifecycle transition.
+ * @param string $request_id Request UUID.
+ * @return string
+ */
+function ec_users_get_artist_dispatch_delivery_meta_key( $user_id, $channel, $event_type, $request_id ) {
+	return EC_USERS_ARTIST_DISPATCH_DELIVERY_META . '_' . md5( absint( $user_id ) . '|' . sanitize_key( $channel ) . '|' . sanitize_key( $event_type ) . '|' . sanitize_text_field( $request_id ) );
+}
+
+/**
+ * Get a durable external-delivery receipt.
+ *
+ * @param int    $user_id    User ID.
+ * @param string $channel    Delivery channel.
+ * @param string $event_type Lifecycle transition.
+ * @param string $request_id Request UUID.
+ * @return array
+ */
+function ec_users_get_artist_dispatch_delivery_receipt( $user_id, $channel, $event_type, $request_id ) {
+	$blog_id = ec_users_get_artist_dispatch_blog_id();
+	switch_to_blog( $blog_id );
+	try {
+		$receipt = get_option( ec_users_get_artist_dispatch_delivery_meta_key( $user_id, $channel, $event_type, $request_id ), array() );
+	} finally {
+		restore_current_blog();
 	}
-	return false;
+	return is_array( $receipt ) ? $receipt : array();
 }
 
 /**
@@ -377,20 +467,74 @@ function ec_users_has_artist_dispatch_delivery_receipt( $user_id, $channel, $eve
  * @return bool
  */
 function ec_users_add_artist_dispatch_delivery_receipt( $user_id, $channel, $event_type, $request_id ) {
-	if ( ec_users_has_artist_dispatch_delivery_receipt( $user_id, $channel, $event_type, $request_id ) ) {
+	$blog_id = ec_users_get_artist_dispatch_blog_id();
+	switch_to_blog( $blog_id );
+	try {
+		return ec_users_add_artist_dispatch_option_once(
+			ec_users_get_artist_dispatch_delivery_meta_key( $user_id, $channel, $event_type, $request_id ),
+			array(
+				'channel'     => sanitize_key( $channel ),
+				'event'       => sanitize_key( $event_type ),
+				'request_id'  => sanitize_text_field( $request_id ),
+				'status'      => 'reserved',
+				'reserved_at' => time(),
+			)
+		);
+	} finally {
+		restore_current_blog();
+	}
+}
+
+/**
+ * Mark a reserved receipt delivered after the external side effect succeeds.
+ *
+ * @param int    $user_id    User ID.
+ * @param string $channel    Delivery channel.
+ * @param string $event_type Lifecycle transition.
+ * @param string $request_id Request UUID.
+ * @return bool
+ */
+function ec_users_mark_artist_dispatch_delivery_receipt( $user_id, $channel, $event_type, $request_id ) {
+	$receipt = ec_users_get_artist_dispatch_delivery_receipt( $user_id, $channel, $event_type, $request_id );
+	if ( empty( $receipt ) ) {
+		return false;
+	}
+	if ( 'delivered' === ( $receipt['status'] ?? '' ) ) {
 		return true;
 	}
-	return false !== add_user_meta(
-		$user_id,
-		EC_USERS_ARTIST_DISPATCH_DELIVERY_META,
-		array(
-			'channel'      => sanitize_key( $channel ),
-			'event'        => sanitize_key( $event_type ),
-			'request_id'   => sanitize_text_field( $request_id ),
-			'delivered_at' => time(),
-		),
-		false
-	);
+	$delivered                 = $receipt;
+	$delivered['status']       = 'delivered';
+	$delivered['delivered_at'] = time();
+	$blog_id = ec_users_get_artist_dispatch_blog_id();
+	switch_to_blog( $blog_id );
+	try {
+		return update_option( ec_users_get_artist_dispatch_delivery_meta_key( $user_id, $channel, $event_type, $request_id ), $delivered, false );
+	} finally {
+		restore_current_blog();
+	}
+}
+
+/**
+ * Remove a reserved delivery receipt after an explicit delivery failure.
+ *
+ * @param int    $user_id    User ID.
+ * @param string $channel    Delivery channel.
+ * @param string $event_type Lifecycle transition.
+ * @param string $request_id Request UUID.
+ * @return bool
+ */
+function ec_users_remove_artist_dispatch_delivery_receipt( $user_id, $channel, $event_type, $request_id ) {
+	$receipt = ec_users_get_artist_dispatch_delivery_receipt( $user_id, $channel, $event_type, $request_id );
+	if ( empty( $receipt ) ) {
+		return true;
+	}
+	$blog_id = ec_users_get_artist_dispatch_blog_id();
+	switch_to_blog( $blog_id );
+	try {
+		return ec_users_delete_artist_dispatch_option_if_value( ec_users_get_artist_dispatch_delivery_meta_key( $user_id, $channel, $event_type, $request_id ), $receipt );
+	} finally {
+		restore_current_blog();
+	}
 }
 
 /**
@@ -408,7 +552,11 @@ function ec_users_maybe_emit_artist_dispatch_event( $user_id, $event_type, array
 		return $state;
 	}
 	$request_id = (string) ( $state['request_id'] ?? '' );
-	if ( ec_users_has_artist_dispatch_delivery_receipt( $user_id, 'analytics', $event_type, $request_id ) ) {
+	$receipt    = ec_users_get_artist_dispatch_delivery_receipt( $user_id, 'analytics', $event_type, $request_id );
+	if ( ! empty( $receipt ) && 'delivered' !== ( $receipt['status'] ?? '' ) ) {
+		return new WP_Error( 'artist_dispatch_analytics_reconciliation_required', __( 'The prior analytics delivery outcome is ambiguous and requires reconciliation.', 'extrachill-users' ) );
+	}
+	if ( ! empty( $receipt ) ) {
 		$next = $state;
 		$next['deliveries']['analytics'][ $event_type ] = time();
 		return ec_users_write_artist_dispatch_state( $user_id, $next, $state )
@@ -419,14 +567,20 @@ function ec_users_maybe_emit_artist_dispatch_event( $user_id, $event_type, array
 	if ( ! $event_name || ! function_exists( 'ec_users_emit_team_experience_event' ) ) {
 		return $state;
 	}
+	if ( ! ec_users_add_artist_dispatch_delivery_receipt( $user_id, 'analytics', $event_type, $request_id ) ) {
+		return new WP_Error( 'artist_dispatch_analytics_receipt_failed', __( 'The Artist Dispatch analytics delivery receipt could not be reserved.', 'extrachill-users' ) );
+	}
 
 	$payload = ec_users_get_artist_dispatch_event_payload( $user_id, $request_id );
 	unset( $payload['user_id'] );
 	if ( 0 >= ec_users_emit_team_experience_event( $event_name, $user_id, $payload ) ) {
+		if ( ! ec_users_remove_artist_dispatch_delivery_receipt( $user_id, 'analytics', $event_type, $request_id ) ) {
+			return new WP_Error( 'artist_dispatch_analytics_reconciliation_required', __( 'Analytics delivery failed and its reservation could not be cleared.', 'extrachill-users' ) );
+		}
 		return new WP_Error( 'artist_dispatch_analytics_failed', __( 'The Artist Dispatch analytics event could not be recorded.', 'extrachill-users' ) );
 	}
-	if ( ! ec_users_add_artist_dispatch_delivery_receipt( $user_id, 'analytics', $event_type, $request_id ) ) {
-		return new WP_Error( 'artist_dispatch_analytics_receipt_failed', __( 'The Artist Dispatch analytics delivery receipt could not be saved.', 'extrachill-users' ) );
+	if ( ! ec_users_mark_artist_dispatch_delivery_receipt( $user_id, 'analytics', $event_type, $request_id ) ) {
+		return new WP_Error( 'artist_dispatch_analytics_reconciliation_required', __( 'Analytics delivery succeeded but its durable receipt could not be finalized.', 'extrachill-users' ) );
 	}
 
 	$next = $state;
@@ -509,7 +663,11 @@ function ec_users_maybe_notify_artist_dispatch_transition( $user_id, $event_type
 		return $state;
 	}
 	$request_id = (string) ( $state['request_id'] ?? '' );
-	if ( ec_users_has_artist_dispatch_delivery_receipt( $user_id, 'notification', $event_type, $request_id ) ) {
+	$receipt    = ec_users_get_artist_dispatch_delivery_receipt( $user_id, 'notification', $event_type, $request_id );
+	if ( ! empty( $receipt ) && 'delivered' !== ( $receipt['status'] ?? '' ) ) {
+		return new WP_Error( 'artist_dispatch_notification_reconciliation_required', __( 'The prior notification delivery outcome is ambiguous and requires reconciliation.', 'extrachill-users' ) );
+	}
+	if ( ! empty( $receipt ) ) {
 		$next = $state;
 		$next['deliveries']['notifications'][ $event_type ] = time();
 		return ec_users_write_artist_dispatch_state( $user_id, $next, $state )
@@ -528,6 +686,9 @@ function ec_users_maybe_notify_artist_dispatch_transition( $user_id, $event_type
 	} finally {
 		restore_current_blog();
 	}
+	if ( ! ec_users_add_artist_dispatch_delivery_receipt( $user_id, 'notification', $event_type, $request_id ) ) {
+		return new WP_Error( 'artist_dispatch_notification_receipt_failed', __( 'The Artist Dispatch notification delivery receipt could not be reserved.', 'extrachill-users' ) );
+	}
 
 	$inserted = ec_users_notify(
 		$user_id,
@@ -540,10 +701,13 @@ function ec_users_maybe_notify_artist_dispatch_transition( $user_id, $event_type
 		)
 	);
 	if ( 1 > $inserted ) {
+		if ( ! ec_users_remove_artist_dispatch_delivery_receipt( $user_id, 'notification', $event_type, $request_id ) ) {
+			return new WP_Error( 'artist_dispatch_notification_reconciliation_required', __( 'Notification delivery failed and its reservation could not be cleared.', 'extrachill-users' ) );
+		}
 		return new WP_Error( 'artist_dispatch_notification_failed', __( 'The Artist Dispatch notification could not be delivered.', 'extrachill-users' ) );
 	}
-	if ( ! ec_users_add_artist_dispatch_delivery_receipt( $user_id, 'notification', $event_type, $request_id ) ) {
-		return new WP_Error( 'artist_dispatch_notification_receipt_failed', __( 'The Artist Dispatch notification delivery receipt could not be saved.', 'extrachill-users' ) );
+	if ( ! ec_users_mark_artist_dispatch_delivery_receipt( $user_id, 'notification', $event_type, $request_id ) ) {
+		return new WP_Error( 'artist_dispatch_notification_reconciliation_required', __( 'Notification delivery succeeded but its durable receipt could not be finalized.', 'extrachill-users' ) );
 	}
 
 	$next = $state;
@@ -737,6 +901,9 @@ function ec_users_request_artist_dispatch_access( $user_id, array $input ) {
 				return new WP_Error( 'artist_dispatch_state_write_failed', __( 'The Artist Dispatch terms renewal could not be saved.', 'extrachill-users' ) );
 			}
 			if ( ! ec_users_add_artist_dispatch_audit_event( $user_id, 'terms_renewed', $renewed['request_id'], $user_id, array( 'terms_version' => $terms_version ) ) ) {
+				if ( ! ec_users_write_artist_dispatch_state( $user_id, $current, $renewed ) ) {
+					return new WP_Error( 'artist_dispatch_rollback_failed', __( 'The terms renewal audit and state rollback both failed.', 'extrachill-users' ) );
+				}
 				return new WP_Error( 'artist_dispatch_audit_failed', __( 'The Artist Dispatch terms renewal audit could not be saved.', 'extrachill-users' ) );
 			}
 			return $renewed;
@@ -863,7 +1030,10 @@ function ec_users_approve_artist_dispatch_access( $user_id, $request_id, $note, 
 		);
 		if ( ! ec_users_write_artist_dispatch_state( $user_id, $approved, $current ) ) {
 			if ( empty( $grant['role_preexisted'] ) ) {
-				ec_users_revoke_artist_dispatch_role( $user_id, ! empty( $grant['membership_preexisted'] ) );
+				$rollback = ec_users_revoke_artist_dispatch_role( $user_id, ! empty( $grant['membership_preexisted'] ) );
+				if ( is_wp_error( $rollback ) ) {
+					return new WP_Error( 'artist_dispatch_rollback_failed', __( 'The approval state failed and the granted role could not be rolled back.', 'extrachill-users' ) );
+				}
 			}
 			return new WP_Error( 'artist_dispatch_state_write_failed', __( 'Artist Dispatch approval could not be saved; the role grant was rolled back.', 'extrachill-users' ) );
 		}

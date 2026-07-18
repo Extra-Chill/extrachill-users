@@ -396,11 +396,10 @@ class Test_Artist_Dispatch_Access extends WP_UnitTestCase {
 		$state = ec_users_maybe_emit_artist_dispatch_event( $user_id, 'requested', $state );
 		ec_users_release_artist_dispatch_lock( $user_id, $lock );
 		$this->assertCount( 4, $state['deliveries']['analytics'] );
-		if ( $this->registered_fake_analytics ) {
-			$this->assertCount( 4, $GLOBALS['ec_artist_dispatch_test_analytics'] );
-			foreach ( $GLOBALS['ec_artist_dispatch_test_analytics'] as $event ) {
-				$this->assertSame( array( 'user_id', 'request_id' ), array_keys( $event['event_data'] ) );
-			}
+		$this->assertTrue( $this->registered_fake_analytics, 'The isolated test suite must own the analytics ability.' );
+		$this->assertCount( 4, $GLOBALS['ec_artist_dispatch_test_analytics'] );
+		foreach ( $GLOBALS['ec_artist_dispatch_test_analytics'] as $event ) {
+			$this->assertSame( array( 'user_id', 'request_id' ), array_keys( $event['event_data'] ) );
 		}
 	}
 
@@ -488,19 +487,20 @@ class Test_Artist_Dispatch_Access extends WP_UnitTestCase {
 		$this->assertCount( 2, $second['deliveries']['analytics'] );
 	}
 
-	public function test_lock_is_bounded_owned_and_supports_safe_expiry_takeover(): void {
+	public function test_lock_is_bounded_owned_and_expiry_fails_closed(): void {
 		$user_id = self::factory()->user->create();
 		$first   = ec_users_acquire_artist_dispatch_lock( $user_id, 'first' );
 		$this->assertNotWPError( $first );
 		$this->assertWPError( ec_users_acquire_artist_dispatch_lock( $user_id, 'concurrent' ) );
 		$expired               = $first;
 		$expired['expires_at'] = time() - 1;
-		$this->assertNotFalse( update_user_meta( $user_id, EC_USERS_ARTIST_DISPATCH_LOCK_META, $expired, $first ) );
+		switch_to_blog( $this->main_blog_id );
+		$this->assertTrue( update_option( EC_USERS_ARTIST_DISPATCH_LOCK_META . '_' . $user_id, $expired, false ) );
+		restore_current_blog();
 		$takeover = ec_users_acquire_artist_dispatch_lock( $user_id, 'takeover' );
-		$this->assertNotWPError( $takeover );
-		$this->assertNotSame( $first['owner_token'], $takeover['owner_token'] );
-		$this->assertFalse( ec_users_release_artist_dispatch_lock( $user_id, $first ) );
-		$this->assertTrue( ec_users_release_artist_dispatch_lock( $user_id, $takeover ) );
+		$this->assertWPError( $takeover );
+		$this->assertSame( 'artist_dispatch_lock_reconciliation_required', $takeover->get_error_code() );
+		$this->assertTrue( ec_users_release_artist_dispatch_lock( $user_id, $expired ) );
 	}
 
 	public function test_failed_state_writes_fail_closed_and_roll_back_role_changes(): void {
