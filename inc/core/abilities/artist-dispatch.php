@@ -63,7 +63,7 @@ function extrachill_users_register_artist_dispatch_abilities() {
 						'enum' => array( EC_USERS_ARTIST_DISPATCH_TERMS_VERSION ),
 					),
 				),
-				'required'   => array( 'artist_id', 'description', 'acknowledgement', 'terms_version' ),
+				'required'   => array( 'acknowledgement', 'terms_version' ),
 			),
 			'callback'    => 'extrachill_users_ability_request_artist_dispatch_access',
 			'permission'  => $self_permission,

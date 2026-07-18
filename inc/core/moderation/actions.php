@@ -64,7 +64,13 @@ function extrachill_users_apply_moderation_action( int $user_id, array $args = a
 	$status = extrachill_users_get_moderation_status( $user_id );
 	if ( function_exists( 'ec_users_revoke_artist_dispatch_for_moderation' ) && empty( $status['active'] ) ) {
 		$dispatch_reason = $payload['reason'] ? $payload['reason'] : $reason_key;
-		ec_users_revoke_artist_dispatch_for_moderation( $user_id, $actor_id, $dispatch_reason );
+		$dispatch_result = ec_users_revoke_artist_dispatch_for_moderation( $user_id, $actor_id, $dispatch_reason );
+		if ( is_wp_error( $dispatch_result ) ) {
+			$results['artist_dispatch'] = array(
+				'error'   => $dispatch_result->get_error_code(),
+				'message' => $dispatch_result->get_error_message(),
+			);
+		}
 	}
 
 	if ( ! empty( $policy['effects']['send_email'] ) ) {
