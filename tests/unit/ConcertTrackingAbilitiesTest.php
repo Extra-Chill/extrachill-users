@@ -132,6 +132,41 @@ class Test_Concert_Tracking_Abilities extends WP_UnitTestCase {
 		$this->assertSame( 'ability_invalid_permissions', $unauthenticated->get_error_code() );
 	}
 
+	public function test_registered_set_ability_propagates_canonical_target_validation(): void {
+		$ability = wp_get_ability( 'extrachill/set-event-mark' );
+		$missing = $ability->execute(
+			array(
+				'event_id' => 999999,
+				'blog_id'  => $this->events_blog_id,
+				'marked'   => true,
+			)
+		);
+		$this->assertWPError( $missing );
+		$this->assertSame( 'event_not_found', $missing->get_error_code() );
+
+		$wrong_type_id = $this->create_event( 'post', 'publish' );
+		$wrong_type    = $ability->execute(
+			array(
+				'event_id' => $wrong_type_id,
+				'blog_id'  => $this->events_blog_id,
+				'marked'   => true,
+			)
+		);
+		$this->assertWPError( $wrong_type );
+		$this->assertSame( 'invalid_event_post_type', $wrong_type->get_error_code() );
+
+		$draft_event_id = $this->create_event( 'data_machine_events', 'draft' );
+		$unpublished    = $ability->execute(
+			array(
+				'event_id' => $draft_event_id,
+				'blog_id'  => $this->events_blog_id,
+				'marked'   => true,
+			)
+		);
+		$this->assertWPError( $unpublished );
+		$this->assertSame( 'event_not_published', $unpublished->get_error_code() );
+	}
+
 	public function test_registered_attendance_ability_preserves_public_reads_and_authorizes_targets(): void {
 		$ability = wp_get_ability( 'extrachill/get-event-attendance' );
 		$this->assertSame(
@@ -214,7 +249,7 @@ class Test_Concert_Tracking_Abilities extends WP_UnitTestCase {
 		}
 
 		$this->assertWPError( $failed_insert );
-		$this->assertSame( 'event_mark_write_failed', $failed_insert->get_error_code() );
+		$this->assertSame( 'event_mark_database_error', $failed_insert->get_error_code() );
 		$this->assertFalse( ec_users_is_event_marked( $this->user_id, $this->event_id, $this->events_blog_id ) );
 
 		$this->assertFalse( is_wp_error( $ability->execute( $input ) ) );
@@ -229,17 +264,31 @@ class Test_Concert_Tracking_Abilities extends WP_UnitTestCase {
 		}
 
 		$this->assertWPError( $failed_delete );
-		$this->assertSame( 'event_mark_write_failed', $failed_delete->get_error_code() );
+		$this->assertSame( 'event_unmark_database_error', $failed_delete->get_error_code() );
 		$this->assertTrue( ec_users_is_event_marked( $this->user_id, $this->event_id, $this->events_blog_id ) );
 	}
 
 	public function fail_tracking_writes( string $query ): string {
 		$table = extrachill_users_concert_tracking_table_name();
-		if ( preg_match( '/^(INSERT INTO|DELETE FROM)\s+`?' . preg_quote( $table, '/' ) . '`?/i', $query ) ) {
+		if ( preg_match( '/^(INSERT(?: IGNORE)? INTO|DELETE FROM)\s+`?' . preg_quote( $table, '/' ) . '`?/i', $query ) ) {
 			return str_replace( $table, $table . '_missing', $query );
 		}
 
 		return $query;
+	}
+
+	private function create_event( string $post_type, string $post_status ): int {
+		switch_to_blog( $this->events_blog_id );
+		try {
+			return self::factory()->post->create(
+				array(
+					'post_type'   => $post_type,
+					'post_status' => $post_status,
+				)
+			);
+		} finally {
+			restore_current_blog();
+		}
 	}
 
 	private function clear_tracking_table(): void {

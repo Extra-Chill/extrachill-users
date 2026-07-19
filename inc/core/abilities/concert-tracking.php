@@ -439,11 +439,6 @@ function extrachill_users_ability_set_event_mark( array $input ) {
 		return $write_result;
 	}
 
-	$stored_marked = ec_users_is_event_marked( $user_id, $event_id, $blog_id );
-	if ( $stored_marked !== $marked ) {
-		return new WP_Error( 'event_mark_write_failed', 'The requested concert attendance state could not be saved.', array( 'status' => 500 ) );
-	}
-
 	$count  = ec_users_get_event_mark_count( $event_id, $blog_id );
 	$timing = ec_users_get_event_timing( $event_id );
 
