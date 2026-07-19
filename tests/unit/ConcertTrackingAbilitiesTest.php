@@ -265,14 +265,14 @@ class Test_Concert_Tracking_Abilities extends WP_UnitTestCase {
 
 	public function invalid_reader_input_provider(): array {
 		return array(
-			'history zero'         => array( 'extrachill/get-user-shows', 'per_page', 0 ),
-			'history negative'     => array( 'extrachill/get-user-shows', 'per_page', -1 ),
-			'history over maximum' => array( 'extrachill/get-user-shows', 'per_page', 101 ),
-			'history nonnumeric'   => array( 'extrachill/get-user-shows', 'per_page', 'all' ),
-			'attendee zero'        => array( 'extrachill/get-event-attendance', 'limit', 0 ),
-			'attendee negative'    => array( 'extrachill/get-event-attendance', 'limit', -1 ),
+			'history zero'          => array( 'extrachill/get-user-shows', 'per_page', 0 ),
+			'history negative'      => array( 'extrachill/get-user-shows', 'per_page', -1 ),
+			'history over maximum'  => array( 'extrachill/get-user-shows', 'per_page', 101 ),
+			'history nonnumeric'    => array( 'extrachill/get-user-shows', 'per_page', 'all' ),
+			'attendee zero'         => array( 'extrachill/get-event-attendance', 'limit', 0 ),
+			'attendee negative'     => array( 'extrachill/get-event-attendance', 'limit', -1 ),
 			'attendee over maximum' => array( 'extrachill/get-event-attendance', 'limit', 101 ),
-			'attendee nonnumeric'  => array( 'extrachill/get-event-attendance', 'limit', 'all' ),
+			'attendee nonnumeric'   => array( 'extrachill/get-event-attendance', 'limit', 'all' ),
 		);
 	}
 
