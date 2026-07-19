@@ -19,21 +19,73 @@ require_once __DIR__ . '/db.php';
 // ─── Core CRUD ───────────────────────────────────────────────────────────────
 
 /**
+ * Validate an attendance target against the canonical Events site.
+ *
+ * @param int $event_id Event post ID.
+ * @param int $blog_id Requested blog ID, or zero to use the canonical site.
+ * @return int|WP_Error Canonical Events blog ID, or a validation error.
+ */
+function ec_users_validate_event_target( int $event_id, int $blog_id = 0 ) {
+	$events_blog_id = function_exists( 'ec_get_blog_id' ) ? (int) ec_get_blog_id( 'events' ) : 0;
+	$events_blog_id = (int) apply_filters( 'extrachill_users_events_blog_id', $events_blog_id );
+
+	if ( $events_blog_id <= 0 || ( is_multisite() && ! get_site( $events_blog_id ) ) ) {
+		return new WP_Error( 'events_site_unavailable', __( 'The canonical Events site is unavailable.', 'extrachill-users' ), array( 'status' => 500 ) );
+	}
+
+	if ( $blog_id > 0 && is_multisite() && ! get_site( $blog_id ) ) {
+		return new WP_Error( 'event_site_not_found', __( 'The requested event site does not exist.', 'extrachill-users' ), array( 'status' => 404 ) );
+	}
+
+	if ( $blog_id > 0 && $blog_id !== $events_blog_id ) {
+		return new WP_Error( 'noncanonical_event_site', __( 'Attendance can only be recorded for events on the canonical Events site.', 'extrachill-users' ), array( 'status' => 400 ) );
+	}
+
+	$switched = get_current_blog_id() !== $events_blog_id;
+	if ( $switched && ! switch_to_blog( $events_blog_id ) ) {
+		return new WP_Error( 'events_site_unavailable', __( 'The canonical Events site is unavailable.', 'extrachill-users' ), array( 'status' => 500 ) );
+	}
+
+	try {
+		$post = get_post( $event_id );
+		if ( ! $post ) {
+			return new WP_Error( 'event_not_found', __( 'The requested event does not exist.', 'extrachill-users' ), array( 'status' => 404 ) );
+		}
+
+		if ( 'data_machine_events' !== $post->post_type ) {
+			return new WP_Error( 'invalid_event_post_type', __( 'The requested post is not an event.', 'extrachill-users' ), array( 'status' => 400 ) );
+		}
+
+		if ( 'publish' !== $post->post_status ) {
+			return new WP_Error( 'event_not_published', __( 'Attendance can only be recorded for published events.', 'extrachill-users' ), array( 'status' => 400 ) );
+		}
+	} finally {
+		if ( $switched ) {
+			restore_current_blog();
+		}
+	}
+
+	return $events_blog_id;
+}
+
+/**
  * Mark an event for a user.
  *
  * Inserts a record if it doesn't exist. No-op if already marked.
  *
  * @param int $user_id User ID.
  * @param int $event_id Event post ID.
- * @param int $blog_id Blog ID (default: current blog).
- * @return bool True if newly marked, false if already existed.
+ * @param int $blog_id Blog ID (default: canonical Events site).
+ * @return bool|WP_Error True if newly marked, false if already existed, or a validation error.
  */
-function ec_users_mark_event( int $user_id, int $event_id, int $blog_id = 0 ): bool {
+function ec_users_mark_event( int $user_id, int $event_id, int $blog_id = 0 ) {
 	global $wpdb;
 
-	if ( ! $blog_id ) {
-		$blog_id = get_current_blog_id();
+	$validated_blog_id = ec_users_validate_event_target( $event_id, $blog_id );
+	if ( is_wp_error( $validated_blog_id ) ) {
+		return $validated_blog_id;
 	}
+	$blog_id = $validated_blog_id;
 
 	$table = extrachill_users_concert_tracking_table_name();
 
@@ -87,15 +139,17 @@ function ec_users_mark_event( int $user_id, int $event_id, int $blog_id = 0 ): b
  *
  * @param int $user_id User ID.
  * @param int $event_id Event post ID.
- * @param int $blog_id Blog ID (default: current blog).
- * @return bool True if removed, false if didn't exist.
+ * @param int $blog_id Blog ID (default: canonical Events site).
+ * @return bool|WP_Error True if removed, false if it did not exist, or a validation error.
  */
-function ec_users_unmark_event( int $user_id, int $event_id, int $blog_id = 0 ): bool {
+function ec_users_unmark_event( int $user_id, int $event_id, int $blog_id = 0 ) {
 	global $wpdb;
 
-	if ( ! $blog_id ) {
-		$blog_id = get_current_blog_id();
+	$validated_blog_id = ec_users_validate_event_target( $event_id, $blog_id );
+	if ( is_wp_error( $validated_blog_id ) ) {
+		return $validated_blog_id;
 	}
+	$blog_id = $validated_blog_id;
 
 	$table   = extrachill_users_concert_tracking_table_name();
 	$deleted = $wpdb->delete(
@@ -134,20 +188,28 @@ function ec_users_unmark_event( int $user_id, int $event_id, int $blog_id = 0 ):
  *
  * @param int $user_id User ID.
  * @param int $event_id Event post ID.
- * @param int $blog_id Blog ID (default: current blog).
- * @return array{ marked: bool } New state.
+ * @param int $blog_id Blog ID (default: canonical Events site).
+ * @return array{ marked: bool }|WP_Error New state or a validation error.
  */
-function ec_users_toggle_event( int $user_id, int $event_id, int $blog_id = 0 ): array {
-	if ( ! $blog_id ) {
-		$blog_id = get_current_blog_id();
+function ec_users_toggle_event( int $user_id, int $event_id, int $blog_id = 0 ) {
+	$validated_blog_id = ec_users_validate_event_target( $event_id, $blog_id );
+	if ( is_wp_error( $validated_blog_id ) ) {
+		return $validated_blog_id;
 	}
+	$blog_id = $validated_blog_id;
 
 	if ( ec_users_is_event_marked( $user_id, $event_id, $blog_id ) ) {
-		ec_users_unmark_event( $user_id, $event_id, $blog_id );
+		$result = ec_users_unmark_event( $user_id, $event_id, $blog_id );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
 		return array( 'marked' => false );
 	}
 
-	ec_users_mark_event( $user_id, $event_id, $blog_id );
+	$result = ec_users_mark_event( $user_id, $event_id, $blog_id );
+	if ( is_wp_error( $result ) ) {
+		return $result;
+	}
 	return array( 'marked' => true );
 }
 
@@ -271,7 +333,7 @@ function ec_users_get_user_dated_event_checks( int $user_id ): array {
 /**
  * Determine the timing state of an event.
  *
- * extrachill-users is network-activated and runs on every site, but the
+ * Extra Chill Users is network-activated and runs on every site, but the
  * data-machine-events plugin that owns datamachine_get_event_timing() is
  * Network: false and only active on the events site. Delegating to that
  * function therefore fails (or silently returns 'past') on every other site.
