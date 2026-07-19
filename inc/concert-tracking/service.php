@@ -19,52 +19,90 @@ require_once __DIR__ . '/db.php';
 // ─── Core CRUD ───────────────────────────────────────────────────────────────
 
 /**
+ * Validate an attendance target against the canonical Events site.
+ *
+ * @param int $event_id Event post ID.
+ * @param int $blog_id Requested blog ID, or zero to use the canonical site.
+ * @return int|WP_Error Canonical Events blog ID, or a validation error.
+ */
+function ec_users_validate_event_target( int $event_id, int $blog_id = 0 ) {
+	$events_blog_id = function_exists( 'ec_get_blog_id' ) ? (int) ec_get_blog_id( 'events' ) : 0;
+	$events_blog_id = (int) apply_filters( 'extrachill_users_events_blog_id', $events_blog_id );
+
+	if ( $events_blog_id <= 0 || ( is_multisite() && ! get_site( $events_blog_id ) ) ) {
+		return new WP_Error( 'events_site_unavailable', __( 'The canonical Events site is unavailable.', 'extrachill-users' ), array( 'status' => 500 ) );
+	}
+
+	if ( $blog_id > 0 && is_multisite() && ! get_site( $blog_id ) ) {
+		return new WP_Error( 'event_site_not_found', __( 'The requested event site does not exist.', 'extrachill-users' ), array( 'status' => 404 ) );
+	}
+
+	if ( $blog_id > 0 && $blog_id !== $events_blog_id ) {
+		return new WP_Error( 'noncanonical_event_site', __( 'Attendance can only be recorded for events on the canonical Events site.', 'extrachill-users' ), array( 'status' => 400 ) );
+	}
+
+	$switched = get_current_blog_id() !== $events_blog_id;
+	if ( $switched && ! switch_to_blog( $events_blog_id ) ) {
+		return new WP_Error( 'events_site_unavailable', __( 'The canonical Events site is unavailable.', 'extrachill-users' ), array( 'status' => 500 ) );
+	}
+
+	try {
+		$post = get_post( $event_id );
+		if ( ! $post ) {
+			return new WP_Error( 'event_not_found', __( 'The requested event does not exist.', 'extrachill-users' ), array( 'status' => 404 ) );
+		}
+
+		if ( 'data_machine_events' !== $post->post_type ) {
+			return new WP_Error( 'invalid_event_post_type', __( 'The requested post is not an event.', 'extrachill-users' ), array( 'status' => 400 ) );
+		}
+
+		if ( 'publish' !== $post->post_status ) {
+			return new WP_Error( 'event_not_published', __( 'Attendance can only be recorded for published events.', 'extrachill-users' ), array( 'status' => 400 ) );
+		}
+	} finally {
+		if ( $switched ) {
+			restore_current_blog();
+		}
+	}
+
+	return $events_blog_id;
+}
+
+/**
  * Mark an event for a user.
  *
  * Inserts a record if it doesn't exist. No-op if already marked.
  *
  * @param int $user_id User ID.
  * @param int $event_id Event post ID.
- * @param int $blog_id Blog ID (default: current blog).
- * @return bool True if newly marked, false if already existed.
+ * @param int $blog_id Blog ID (default: canonical Events site).
+ * @return bool|WP_Error True if newly marked, false if already existed, or a validation error.
  */
-function ec_users_mark_event( int $user_id, int $event_id, int $blog_id = 0 ): bool {
+function ec_users_mark_event( int $user_id, int $event_id, int $blog_id = 0 ) {
 	global $wpdb;
 
-	if ( ! $blog_id ) {
-		$blog_id = get_current_blog_id();
+	$validated_blog_id = ec_users_validate_event_target( $event_id, $blog_id );
+	if ( is_wp_error( $validated_blog_id ) ) {
+		return $validated_blog_id;
 	}
+	$blog_id = $validated_blog_id;
 
-	$table = extrachill_users_concert_tracking_table_name();
-
-	// Check if already marked.
-	$exists = $wpdb->get_var(
+	$table    = extrachill_users_concert_tracking_table_name();
+	$inserted = $wpdb->query(
 		$wpdb->prepare(
-			"SELECT id FROM {$table} WHERE user_id = %d AND event_id = %d AND blog_id = %d LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from trusted helper.
+			"INSERT IGNORE INTO {$table} (user_id, event_id, blog_id, created_at) VALUES (%d, %d, %d, %s)", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from trusted helper; the unique key is the idempotence primitive.
 			$user_id,
 			$event_id,
-			$blog_id
+			$blog_id,
+			current_time( 'mysql', true )
 		)
 	);
 
-	if ( $exists ) {
-		return false;
+	if ( false === $inserted ) {
+		return new WP_Error( 'event_mark_database_error', __( 'Attendance could not be marked.', 'extrachill-users' ), array( 'status' => 500 ) );
 	}
 
-	$wpdb->insert(
-		$table,
-		array(
-			'user_id'    => $user_id,
-			'event_id'   => $event_id,
-			'blog_id'    => $blog_id,
-			'created_at' => current_time( 'mysql', true ),
-		),
-		array( '%d', '%d', '%d', '%s' )
-	);
-
-	$inserted = (bool) $wpdb->insert_id;
-
-	if ( $inserted ) {
+	if ( 1 === $inserted ) {
 		/**
 		 * Fires when a user newly marks an event (not on no-op re-marks).
 		 *
@@ -79,7 +117,7 @@ function ec_users_mark_event( int $user_id, int $event_id, int $blog_id = 0 ): b
 		do_action( 'ec_users_event_marked', $user_id, $event_id, $blog_id );
 	}
 
-	return $inserted;
+	return 1 === $inserted;
 }
 
 /**
@@ -87,15 +125,17 @@ function ec_users_mark_event( int $user_id, int $event_id, int $blog_id = 0 ): b
  *
  * @param int $user_id User ID.
  * @param int $event_id Event post ID.
- * @param int $blog_id Blog ID (default: current blog).
- * @return bool True if removed, false if didn't exist.
+ * @param int $blog_id Blog ID (default: canonical Events site).
+ * @return bool|WP_Error True if removed, false if it did not exist, or a validation error.
  */
-function ec_users_unmark_event( int $user_id, int $event_id, int $blog_id = 0 ): bool {
+function ec_users_unmark_event( int $user_id, int $event_id, int $blog_id = 0 ) {
 	global $wpdb;
 
-	if ( ! $blog_id ) {
-		$blog_id = get_current_blog_id();
+	$validated_blog_id = ec_users_validate_event_target( $event_id, $blog_id );
+	if ( is_wp_error( $validated_blog_id ) ) {
+		return $validated_blog_id;
 	}
+	$blog_id = $validated_blog_id;
 
 	$table   = extrachill_users_concert_tracking_table_name();
 	$deleted = $wpdb->delete(
@@ -107,8 +147,11 @@ function ec_users_unmark_event( int $user_id, int $event_id, int $blog_id = 0 ):
 		),
 		array( '%d', '%d', '%d' )
 	);
+	if ( false === $deleted ) {
+		return new WP_Error( 'event_unmark_database_error', __( 'Attendance could not be unmarked.', 'extrachill-users' ), array( 'status' => 500 ) );
+	}
 
-	$removed = false !== $deleted && $deleted > 0;
+	$removed = $deleted > 0;
 
 	if ( $removed ) {
 		/**
@@ -134,21 +177,52 @@ function ec_users_unmark_event( int $user_id, int $event_id, int $blog_id = 0 ):
  *
  * @param int $user_id User ID.
  * @param int $event_id Event post ID.
- * @param int $blog_id Blog ID (default: current blog).
- * @return array{ marked: bool } New state.
+ * @param int $blog_id Blog ID (default: canonical Events site).
+ * @return array{ marked: bool }|WP_Error New state or a validation error.
  */
-function ec_users_toggle_event( int $user_id, int $event_id, int $blog_id = 0 ): array {
-	if ( ! $blog_id ) {
-		$blog_id = get_current_blog_id();
+function ec_users_toggle_event( int $user_id, int $event_id, int $blog_id = 0 ) {
+	global $wpdb;
+
+	$validated_blog_id = ec_users_validate_event_target( $event_id, $blog_id );
+	if ( is_wp_error( $validated_blog_id ) ) {
+		return $validated_blog_id;
+	}
+	$blog_id = $validated_blog_id;
+
+	$lock_name = 'ec_attendance_' . md5( $user_id . ':' . $event_id . ':' . $blog_id );
+	$acquired  = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 5)', $lock_name ) );
+	if ( null === $acquired && '' !== $wpdb->last_error ) {
+		return new WP_Error( 'event_toggle_lock_database_error', __( 'Attendance could not be updated.', 'extrachill-users' ), array( 'status' => 500 ) );
+	}
+	if ( 1 !== (int) $acquired ) {
+		return new WP_Error( 'event_toggle_lock_timeout', __( 'Attendance is busy. Please try again.', 'extrachill-users' ), array( 'status' => 409 ) );
 	}
 
-	if ( ec_users_is_event_marked( $user_id, $event_id, $blog_id ) ) {
-		ec_users_unmark_event( $user_id, $event_id, $blog_id );
-		return array( 'marked' => false );
-	}
+	try {
+		if ( ec_users_is_event_marked( $user_id, $event_id, $blog_id ) ) {
+			$result = ec_users_unmark_event( $user_id, $event_id, $blog_id );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+			if ( $result || ! ec_users_is_event_marked( $user_id, $event_id, $blog_id ) ) {
+				return array( 'marked' => false );
+			}
 
-	ec_users_mark_event( $user_id, $event_id, $blog_id );
-	return array( 'marked' => true );
+			return new WP_Error( 'event_toggle_state_error', __( 'Attendance could not be updated.', 'extrachill-users' ), array( 'status' => 500 ) );
+		}
+
+		$result = ec_users_mark_event( $user_id, $event_id, $blog_id );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		if ( $result || ec_users_is_event_marked( $user_id, $event_id, $blog_id ) ) {
+			return array( 'marked' => true );
+		}
+
+		return new WP_Error( 'event_toggle_state_error', __( 'Attendance could not be updated.', 'extrachill-users' ), array( 'status' => 500 ) );
+	} finally {
+		$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+	}
 }
 
 /**
@@ -271,7 +345,7 @@ function ec_users_get_user_dated_event_checks( int $user_id ): array {
 /**
  * Determine the timing state of an event.
  *
- * extrachill-users is network-activated and runs on every site, but the
+ * Extra Chill Users is network-activated and runs on every site, but the
  * data-machine-events plugin that owns datamachine_get_event_timing() is
  * Network: false and only active on the events site. Delegating to that
  * function therefore fails (or silently returns 'past') on every other site.
@@ -392,10 +466,11 @@ function ec_users_get_user_events( int $user_id, array $args = array() ): array 
 	$table         = extrachill_users_concert_tracking_table_name();
 	$blog_id       = $args['blog_id'] ? $args['blog_id'] : ( function_exists( 'ec_get_blog_id' ) ? ec_get_blog_id( 'events' ) : 7 );
 	$events_prefix = $wpdb->get_blog_prefix( $blog_id );
+	$posts_table   = $events_prefix . 'posts';
 
 	// Build WHERE clauses.
-	$where   = array( 'ct.user_id = %d', 'ct.blog_id = %d' );
-	$prepare = array( $user_id, $blog_id );
+	$where   = array( 'ct.user_id = %d', 'ct.blog_id = %d', 'p.post_type = %s', 'p.post_status = %s' );
+	$prepare = array( $user_id, $blog_id, 'data_machine_events', 'publish' );
 
 	$dates_table = $events_prefix . 'datamachine_event_dates';
 
@@ -434,6 +509,7 @@ function ec_users_get_user_events( int $user_id, array $args = array() ): array 
 		"SELECT COUNT(*)
 		FROM {$table} ct
 		INNER JOIN {$dates_table} ed ON ct.event_id = ed.post_id
+		INNER JOIN {$posts_table} p ON ct.event_id = p.ID
 		WHERE {$where_sql}",
 		...$prepare
 	);
@@ -451,6 +527,7 @@ function ec_users_get_user_events( int $user_id, array $args = array() ): array 
 		"SELECT ct.event_id, ct.created_at AS marked_at, DATE(ed.start_datetime) AS event_date
 		FROM {$table} ct
 		INNER JOIN {$dates_table} ed ON ct.event_id = ed.post_id
+		INNER JOIN {$posts_table} p ON ct.event_id = p.ID
 		WHERE {$where_sql}
 		ORDER BY ed.start_datetime {$order_sql}
 		LIMIT %d OFFSET %d",
@@ -480,6 +557,8 @@ function ec_users_get_user_events( int $user_id, array $args = array() ): array 
 	}
 
 	try {
+		_prime_post_caches( array_map( 'intval', wp_list_pluck( $rows, 'event_id' ) ), true, true );
+
 		foreach ( $rows as $row ) {
 			$event_id = (int) $row['event_id'];
 			$post     = get_post( $event_id );
@@ -610,12 +689,13 @@ function ec_users_get_user_concert_stats( int $user_id, array $args = array() ):
 	$blog_id       = ! empty( $args['blog_id'] ) ? (int) $args['blog_id'] : ( function_exists( 'ec_get_blog_id' ) ? ec_get_blog_id( 'events' ) : 7 );
 	$table         = extrachill_users_concert_tracking_table_name();
 	$events_prefix = $wpdb->get_blog_prefix( $blog_id );
+	$posts_table   = $events_prefix . 'posts';
 
 	$dates_table = $events_prefix . 'datamachine_event_dates';
 
 	// Base WHERE for this user + blog.
-	$where   = array( 'ct.user_id = %d', 'ct.blog_id = %d' );
-	$prepare = array( $user_id, $blog_id );
+	$where   = array( 'ct.user_id = %d', 'ct.blog_id = %d', 'p.post_type = %s', 'p.post_status = %s' );
+	$prepare = array( $user_id, $blog_id, 'data_machine_events', 'publish' );
 
 	if ( ! empty( $args['year'] ) ) {
 		$where[]   = 'YEAR(ed.start_datetime) = %d';
@@ -639,6 +719,7 @@ function ec_users_get_user_concert_stats( int $user_id, array $args = array() ):
 			"SELECT COUNT(*)
 			FROM {$table} ct
 			INNER JOIN {$dates_table} ed ON ct.event_id = ed.post_id
+			INNER JOIN {$posts_table} p ON ct.event_id = p.ID
 			WHERE {$where_sql}",
 			...$prepare
 		)
@@ -667,6 +748,7 @@ function ec_users_get_user_concert_stats( int $user_id, array $args = array() ):
 			"SELECT ct.event_id
 			FROM {$table} ct
 			INNER JOIN {$dates_table} ed ON ct.event_id = ed.post_id
+			INNER JOIN {$posts_table} p ON ct.event_id = p.ID
 			WHERE {$where_sql}",
 			...$prepare
 		)
@@ -768,6 +850,7 @@ function ec_users_get_user_concert_stats( int $user_id, array $args = array() ):
 			"SELECT YEAR(ed.start_datetime) AS yr, COUNT(*) AS count
 			FROM {$table} ct
 			INNER JOIN {$dates_table} ed ON ct.event_id = ed.post_id
+			INNER JOIN {$posts_table} p ON ct.event_id = p.ID
 			WHERE {$where_sql}
 			GROUP BY yr
 			ORDER BY yr DESC",
@@ -789,6 +872,7 @@ function ec_users_get_user_concert_stats( int $user_id, array $args = array() ):
 			"SELECT ct.event_id, DATE(ed.start_datetime) AS event_date
 			FROM {$table} ct
 			INNER JOIN {$dates_table} ed ON ct.event_id = ed.post_id
+			INNER JOIN {$posts_table} p ON ct.event_id = p.ID
 			WHERE {$where_sql}
 			ORDER BY ed.start_datetime ASC
 			LIMIT 1",
@@ -802,6 +886,7 @@ function ec_users_get_user_concert_stats( int $user_id, array $args = array() ):
 			"SELECT ct.event_id, DATE(ed.start_datetime) AS event_date
 			FROM {$table} ct
 			INNER JOIN {$dates_table} ed ON ct.event_id = ed.post_id
+			INNER JOIN {$posts_table} p ON ct.event_id = p.ID
 			WHERE {$where_sql}
 			ORDER BY ed.start_datetime DESC
 			LIMIT 1",
@@ -814,25 +899,45 @@ function ec_users_get_user_concert_stats( int $user_id, array $args = array() ):
 	$first_show  = null;
 	$latest_show = null;
 
-	if ( $first_show_row ) {
-		$post = get_post( (int) $first_show_row['event_id'] );
-		if ( $post instanceof WP_Post ) {
-			$first_show = array(
-				'event_id' => $post->ID,
-				'title'    => $post->post_title,
-				'date'     => $first_show_row['event_date'],
-			);
-		}
+	$switched = false;
+	if ( get_current_blog_id() !== $blog_id ) {
+		switch_to_blog( $blog_id );
+		$switched = true;
 	}
 
-	if ( $latest_show_row ) {
-		$post = get_post( (int) $latest_show_row['event_id'] );
-		if ( $post instanceof WP_Post ) {
-			$latest_show = array(
-				'event_id' => $post->ID,
-				'title'    => $post->post_title,
-				'date'     => $latest_show_row['event_date'],
-			);
+	try {
+		$summary_ids = array_filter(
+			array(
+				$first_show_row ? (int) $first_show_row['event_id'] : 0,
+				$latest_show_row ? (int) $latest_show_row['event_id'] : 0,
+			)
+		);
+		_prime_post_caches( array_values( array_unique( $summary_ids ) ), true, true );
+
+		if ( $first_show_row ) {
+			$post = get_post( (int) $first_show_row['event_id'] );
+			if ( $post instanceof WP_Post ) {
+				$first_show = array(
+					'event_id' => $post->ID,
+					'title'    => $post->post_title,
+					'date'     => $first_show_row['event_date'],
+				);
+			}
+		}
+
+		if ( $latest_show_row ) {
+			$post = get_post( (int) $latest_show_row['event_id'] );
+			if ( $post instanceof WP_Post ) {
+				$latest_show = array(
+					'event_id' => $post->ID,
+					'title'    => $post->post_title,
+					'date'     => $latest_show_row['event_date'],
+				);
+			}
+		}
+	} finally {
+		if ( $switched ) {
+			restore_current_blog();
 		}
 	}
 
