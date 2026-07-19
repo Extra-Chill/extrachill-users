@@ -87,36 +87,22 @@ function ec_users_mark_event( int $user_id, int $event_id, int $blog_id = 0 ) {
 	}
 	$blog_id = $validated_blog_id;
 
-	$table = extrachill_users_concert_tracking_table_name();
-
-	// Check if already marked.
-	$exists = $wpdb->get_var(
+	$table    = extrachill_users_concert_tracking_table_name();
+	$inserted = $wpdb->query(
 		$wpdb->prepare(
-			"SELECT id FROM {$table} WHERE user_id = %d AND event_id = %d AND blog_id = %d LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from trusted helper.
+			"INSERT IGNORE INTO {$table} (user_id, event_id, blog_id, created_at) VALUES (%d, %d, %d, %s)", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from trusted helper; the unique key is the idempotence primitive.
 			$user_id,
 			$event_id,
-			$blog_id
+			$blog_id,
+			current_time( 'mysql', true )
 		)
 	);
 
-	if ( $exists ) {
-		return false;
+	if ( false === $inserted ) {
+		return new WP_Error( 'event_mark_database_error', __( 'Attendance could not be marked.', 'extrachill-users' ), array( 'status' => 500 ) );
 	}
 
-	$wpdb->insert(
-		$table,
-		array(
-			'user_id'    => $user_id,
-			'event_id'   => $event_id,
-			'blog_id'    => $blog_id,
-			'created_at' => current_time( 'mysql', true ),
-		),
-		array( '%d', '%d', '%d', '%s' )
-	);
-
-	$inserted = (bool) $wpdb->insert_id;
-
-	if ( $inserted ) {
+	if ( 1 === $inserted ) {
 		/**
 		 * Fires when a user newly marks an event (not on no-op re-marks).
 		 *
@@ -131,7 +117,7 @@ function ec_users_mark_event( int $user_id, int $event_id, int $blog_id = 0 ) {
 		do_action( 'ec_users_event_marked', $user_id, $event_id, $blog_id );
 	}
 
-	return $inserted;
+	return 1 === $inserted;
 }
 
 /**
@@ -161,8 +147,11 @@ function ec_users_unmark_event( int $user_id, int $event_id, int $blog_id = 0 ) 
 		),
 		array( '%d', '%d', '%d' )
 	);
+	if ( false === $deleted ) {
+		return new WP_Error( 'event_unmark_database_error', __( 'Attendance could not be unmarked.', 'extrachill-users' ), array( 'status' => 500 ) );
+	}
 
-	$removed = false !== $deleted && $deleted > 0;
+	$removed = $deleted > 0;
 
 	if ( $removed ) {
 		/**
@@ -192,25 +181,48 @@ function ec_users_unmark_event( int $user_id, int $event_id, int $blog_id = 0 ) 
  * @return array{ marked: bool }|WP_Error New state or a validation error.
  */
 function ec_users_toggle_event( int $user_id, int $event_id, int $blog_id = 0 ) {
+	global $wpdb;
+
 	$validated_blog_id = ec_users_validate_event_target( $event_id, $blog_id );
 	if ( is_wp_error( $validated_blog_id ) ) {
 		return $validated_blog_id;
 	}
 	$blog_id = $validated_blog_id;
 
-	if ( ec_users_is_event_marked( $user_id, $event_id, $blog_id ) ) {
-		$result = ec_users_unmark_event( $user_id, $event_id, $blog_id );
+	$lock_name = 'ec_attendance_' . md5( $user_id . ':' . $event_id . ':' . $blog_id );
+	$acquired  = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 5)', $lock_name ) );
+	if ( null === $acquired && '' !== $wpdb->last_error ) {
+		return new WP_Error( 'event_toggle_lock_database_error', __( 'Attendance could not be updated.', 'extrachill-users' ), array( 'status' => 500 ) );
+	}
+	if ( 1 !== (int) $acquired ) {
+		return new WP_Error( 'event_toggle_lock_timeout', __( 'Attendance is busy. Please try again.', 'extrachill-users' ), array( 'status' => 409 ) );
+	}
+
+	try {
+		if ( ec_users_is_event_marked( $user_id, $event_id, $blog_id ) ) {
+			$result = ec_users_unmark_event( $user_id, $event_id, $blog_id );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+			if ( $result || ! ec_users_is_event_marked( $user_id, $event_id, $blog_id ) ) {
+				return array( 'marked' => false );
+			}
+
+			return new WP_Error( 'event_toggle_state_error', __( 'Attendance could not be updated.', 'extrachill-users' ), array( 'status' => 500 ) );
+		}
+
+		$result = ec_users_mark_event( $user_id, $event_id, $blog_id );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
-		return array( 'marked' => false );
-	}
+		if ( $result || ec_users_is_event_marked( $user_id, $event_id, $blog_id ) ) {
+			return array( 'marked' => true );
+		}
 
-	$result = ec_users_mark_event( $user_id, $event_id, $blog_id );
-	if ( is_wp_error( $result ) ) {
-		return $result;
+		return new WP_Error( 'event_toggle_state_error', __( 'Attendance could not be updated.', 'extrachill-users' ), array( 'status' => 500 ) );
+	} finally {
+		$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
 	}
-	return array( 'marked' => true );
 }
 
 /**

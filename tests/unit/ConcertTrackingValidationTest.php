@@ -32,6 +32,20 @@ class Test_Concert_Tracking_Validation extends WP_UnitTestCase {
 	private int $user_id;
 
 	/**
+	 * Tracking-table operation to replace with invalid SQL.
+	 *
+	 * @var string
+	 */
+	private string $failed_operation = '';
+
+	/**
+	 * Captured advisory-lock queries.
+	 *
+	 * @var string[]
+	 */
+	private array $lock_queries = array();
+
+	/**
 	 * Create isolated multisite fixtures.
 	 */
 	protected function setUp(): void {
@@ -64,6 +78,46 @@ class Test_Concert_Tracking_Validation extends WP_UnitTestCase {
 	 */
 	public function filter_events_blog_id(): int {
 		return $this->events_blog_id;
+	}
+
+	/**
+	 * Replace one tracking-table mutation with a deterministic database error.
+	 *
+	 * @param string $query SQL query.
+	 * @return string
+	 */
+	public function fail_tracking_mutation( string $query ): string {
+		$table = extrachill_users_concert_tracking_table_name();
+		if ( 'insert' === $this->failed_operation && str_starts_with( ltrim( $query ), "INSERT IGNORE INTO {$table}" ) ) {
+			return 'INSERT INTO ec_missing_attendance_table (id) VALUES (1)';
+		}
+		if ( 'delete' === $this->failed_operation && str_starts_with( ltrim( $query ), "DELETE FROM {$table}" ) ) {
+			return 'DELETE FROM ec_missing_attendance_table WHERE id = 1';
+		}
+		return $query;
+	}
+
+	/**
+	 * Capture advisory-lock acquisition and release queries.
+	 *
+	 * @param string $query SQL query.
+	 * @return string
+	 */
+	public function capture_lock_queries( string $query ): string {
+		if ( false !== strpos( $query, 'GET_LOCK(' ) || false !== strpos( $query, 'RELEASE_LOCK(' ) ) {
+			$this->lock_queries[] = $query;
+		}
+		return $query;
+	}
+
+	/**
+	 * Force advisory-lock acquisition to time out.
+	 *
+	 * @param string $query SQL query.
+	 * @return string
+	 */
+	public function timeout_toggle_lock( string $query ): string {
+		return false !== strpos( $query, 'GET_LOCK(' ) ? 'SELECT 0' : $query;
 	}
 
 	/**
@@ -182,9 +236,117 @@ class Test_Concert_Tracking_Validation extends WP_UnitTestCase {
 	public function unpublished_status_provider(): array {
 		return array(
 			'draft'   => array( 'draft' ),
+			'pending' => array( 'pending' ),
+			'future'  => array( 'future' ),
 			'private' => array( 'private' ),
 			'trash'   => array( 'trash' ),
 		);
+	}
+
+	/**
+	 * Mark database errors are not reported as idempotent no-ops.
+	 */
+	public function test_mark_distinguishes_noop_from_database_failure(): void {
+		$event_id = $this->create_post_on_blog( $this->events_blog_id, 'data_machine_events', 'publish' );
+		$this->assertTrue( ec_users_mark_event( $this->user_id, $event_id ) );
+		$this->assertFalse( ec_users_mark_event( $this->user_id, $event_id ) );
+		$this->assertTrue( ec_users_unmark_event( $this->user_id, $event_id ) );
+
+		$this->failed_operation = 'insert';
+		add_filter( 'query', array( $this, 'fail_tracking_mutation' ) );
+		try {
+			$result = ec_users_mark_event( $this->user_id, $event_id );
+		} finally {
+			remove_filter( 'query', array( $this, 'fail_tracking_mutation' ) );
+		}
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'event_mark_database_error', $result->get_error_code() );
+		$this->assertFalse( ec_users_is_event_marked( $this->user_id, $event_id, $this->events_blog_id ) );
+	}
+
+	/**
+	 * Unmark database errors are not reported as idempotent no-ops.
+	 */
+	public function test_unmark_distinguishes_noop_from_database_failure(): void {
+		$event_id = $this->create_post_on_blog( $this->events_blog_id, 'data_machine_events', 'publish' );
+		$this->assertFalse( ec_users_unmark_event( $this->user_id, $event_id ) );
+		$this->assertTrue( ec_users_mark_event( $this->user_id, $event_id ) );
+
+		$this->failed_operation = 'delete';
+		add_filter( 'query', array( $this, 'fail_tracking_mutation' ) );
+		try {
+			$result = ec_users_unmark_event( $this->user_id, $event_id );
+		} finally {
+			remove_filter( 'query', array( $this, 'fail_tracking_mutation' ) );
+		}
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'event_unmark_database_error', $result->get_error_code() );
+		$this->assertTrue( ec_users_is_event_marked( $this->user_id, $event_id, $this->events_blog_id ) );
+	}
+
+	/**
+	 * Registered ability execution preserves service database errors.
+	 */
+	public function test_registered_ability_propagates_database_failure(): void {
+		$event_id = $this->create_post_on_blog( $this->events_blog_id, 'data_machine_events', 'publish' );
+		$ability  = wp_get_ability( 'extrachill/toggle-event-mark' );
+		$this->assertNotNull( $ability );
+
+		$this->failed_operation = 'insert';
+		add_filter( 'query', array( $this, 'fail_tracking_mutation' ) );
+		try {
+			$result = $ability->execute( array( 'event_id' => $event_id ) );
+		} finally {
+			remove_filter( 'query', array( $this, 'fail_tracking_mutation' ) );
+		}
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'event_mark_database_error', $result->get_error_code() );
+		$this->assertSame( 500, $result->get_error_data()['status'] );
+		$this->assertSame( 0, ec_users_get_event_mark_count( $event_id, $this->events_blog_id ) );
+	}
+
+	/**
+	 * Every toggle holds the per-key lock through its mutation.
+	 */
+	public function test_toggle_serializes_two_transitions_through_advisory_lock(): void {
+		$event_id = $this->create_post_on_blog( $this->events_blog_id, 'data_machine_events', 'publish' );
+		add_filter( 'query', array( $this, 'capture_lock_queries' ) );
+		try {
+			$marked   = ec_users_toggle_event( $this->user_id, $event_id );
+			$unmarked = ec_users_toggle_event( $this->user_id, $event_id );
+		} finally {
+			remove_filter( 'query', array( $this, 'capture_lock_queries' ) );
+		}
+
+		$this->assertSame( array( 'marked' => true ), $marked );
+		$this->assertSame( array( 'marked' => false ), $unmarked );
+		$this->assertCount( 4, $this->lock_queries );
+		$this->assertStringContainsString( 'GET_LOCK(', $this->lock_queries[0] );
+		$this->assertStringContainsString( 'RELEASE_LOCK(', $this->lock_queries[1] );
+		$this->assertStringContainsString( 'GET_LOCK(', $this->lock_queries[2] );
+		$this->assertStringContainsString( 'RELEASE_LOCK(', $this->lock_queries[3] );
+		$this->assertFalse( ec_users_is_event_marked( $this->user_id, $event_id, $this->events_blog_id ) );
+	}
+
+	/**
+	 * Lock contention returns a stable ability-facing error without mutation.
+	 */
+	public function test_toggle_lock_timeout_does_not_report_unstored_state(): void {
+		$event_id = $this->create_post_on_blog( $this->events_blog_id, 'data_machine_events', 'publish' );
+		add_filter( 'query', array( $this, 'timeout_toggle_lock' ) );
+		try {
+			$result = extrachill_users_ability_toggle_event_mark( array( 'event_id' => $event_id ) );
+		} finally {
+			remove_filter( 'query', array( $this, 'timeout_toggle_lock' ) );
+		}
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'event_toggle_lock_timeout', $result->get_error_code() );
+		$this->assertSame( 409, $result->get_error_data()['status'] );
+		$this->assertSame( 0, ec_users_get_event_mark_count( $event_id, $this->events_blog_id ) );
 	}
 
 	/**
