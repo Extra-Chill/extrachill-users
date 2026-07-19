@@ -195,8 +195,10 @@ function extrachill_users_register_concert_tracking_abilities() {
 					),
 					'per_page'  => array(
 						'type'        => 'integer',
-						'description' => 'Results per page.',
-						'default'     => 20,
+						'description' => 'Results per page (1-100).',
+						'default'     => EC_USERS_CONCERT_HISTORY_PER_PAGE_DEFAULT,
+						'minimum'     => EC_USERS_CONCERT_HISTORY_PER_PAGE_MIN,
+						'maximum'     => EC_USERS_CONCERT_HISTORY_PER_PAGE_MAX,
 					),
 				),
 			),
@@ -363,8 +365,10 @@ function extrachill_users_register_concert_tracking_abilities() {
 					),
 					'limit'             => array(
 						'type'        => 'integer',
-						'description' => 'Max attendees to return.',
-						'default'     => 10,
+						'description' => 'Max attendees to return (1-100).',
+						'default'     => EC_USERS_EVENT_ATTENDEE_LIMIT_DEFAULT,
+						'minimum'     => EC_USERS_EVENT_ATTENDEE_LIMIT_MIN,
+						'maximum'     => EC_USERS_EVENT_ATTENDEE_LIMIT_MAX,
 					),
 				),
 				'required'   => array( 'event_id' ),
@@ -579,7 +583,7 @@ function extrachill_users_ability_get_event_attendance( array $input ) {
 	}
 
 	if ( ! empty( $input['include_attendees'] ) ) {
-		$limit               = ! empty( $input['limit'] ) ? (int) $input['limit'] : 10;
+		$limit               = $input['limit'] ?? EC_USERS_EVENT_ATTENDEE_LIMIT_DEFAULT;
 		$result['attendees'] = ec_users_get_event_attendees( $event_id, $blog_id, $limit );
 	}
 
