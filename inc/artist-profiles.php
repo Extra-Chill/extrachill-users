@@ -175,10 +175,11 @@ function ec_get_latest_artist_for_user( $user_id = null ) {
 /**
  * Check if user can manage a specific artist profile
  *
- * Network-wide permission check for artist management. Returns true if user is:
+ * Network-wide permission check for artist management. The target must be a
+ * published artist profile. Returns true if the user is:
  * - An administrator (manage_options capability)
- * - The post author of the artist profile
- * - Listed in the user's _artist_profile_ids meta (roster member)
+ * - A validated reciprocal roster member
+ * - The post author of the artist profile (legacy compatibility)
  *
  * @deprecated-soon Slated for migration to ec_user_can( 'manage_artist', [ 'artist_id' => $id ] )
  *                  and deletion per Extra-Chill/extrachill-users#60 (pending the
@@ -198,32 +199,31 @@ function ec_can_manage_artist( $user_id = null, $artist_id = null ) {
 		return false;
 	}
 
-	// Admins can manage any artist.
+	$artist_blog_id = function_exists( 'ec_get_blog_id' ) ? ec_get_blog_id( 'artist' ) : null;
+	if ( ! $artist_blog_id ) {
+		return false;
+	}
+
+	switch_to_blog( $artist_blog_id );
+	try {
+		$post = get_post( $artist_id );
+		if ( ! $post instanceof WP_Post || 'artist_profile' !== $post->post_type || 'publish' !== $post->post_status ) {
+			return false;
+		}
+		$is_post_author = (int) $post->post_author === (int) $user_id;
+	} finally {
+		restore_current_blog();
+	}
+
 	if ( user_can( $user_id, 'manage_options' ) ) {
 		return true;
 	}
 
-	// Check if user owns this artist via user meta.
-	$user_artist_ids = get_user_meta( $user_id, '_artist_profile_ids', true );
-	if ( is_array( $user_artist_ids ) && in_array( (int) $artist_id, array_map( 'intval', $user_artist_ids ), true ) ) {
+	if ( in_array( (int) $artist_id, ec_get_artists_for_user( $user_id ), true ) ) {
 		return true;
 	}
 
-	// Check if user is post author (requires a cross-site blog switch).
-	$artist_blog_id = function_exists( 'ec_get_blog_id' ) ? ec_get_blog_id( 'artist' ) : null;
-	if ( $artist_blog_id ) {
-		switch_to_blog( $artist_blog_id );
-		try {
-			$post = get_post( $artist_id );
-			if ( $post instanceof WP_Post && (int) $post->post_author === (int) $user_id ) {
-				return true;
-			}
-		} finally {
-			restore_current_blog();
-		}
-	}
-
-	return false;
+	return $is_post_author;
 }
 
 /**
