@@ -388,7 +388,8 @@ function ec_users_get_events_now( int $blog_id ): string {
  *
  * The two history tabs map states explicitly: Past contains only `past`, while
  * Upcoming uses `active` and therefore contains both `upcoming` and `ongoing`.
- * Column names remain bare so MySQL can use the event date indexes.
+ * Past leads with the indexed start range and uses COALESCE only for the
+ * residual end check, avoiding an OR that prevents index condition pushdown.
  *
  * @param string $timing `upcoming`, `ongoing`, `past`, or `active`.
  * @param string $now    MySQL datetime in the Events site's timezone.
@@ -412,7 +413,7 @@ function ec_users_build_event_timing_condition( string $timing, string $now, str
 			);
 		case 'past':
 			return array(
-				'where'   => "({$start} < %s AND ({$end} < %s OR {$end} IS NULL))",
+				'where'   => "({$start} < %s AND COALESCE({$end}, {$start}) < %s)",
 				'prepare' => array( $now, $now ),
 			);
 		case 'active':
@@ -785,9 +786,6 @@ function ec_users_get_user_concert_stats( int $user_id, array $args = array() ):
 	// Base WHERE for this user + blog.
 	$where   = array( 'ct.user_id = %d', 'ct.blog_id = %d', 'p.post_type = %s', 'p.post_status = %s' );
 	$prepare = array( $user_id, $blog_id, 'data_machine_events', 'publish' );
-	$past    = ec_users_build_event_timing_condition( 'past', ec_users_get_events_now( $blog_id ) );
-	$where[] = $past['where'];
-	$prepare = array_merge( $prepare, $past['prepare'] );
 
 	if ( ! empty( $args['year'] ) ) {
 		$where[]   = 'YEAR(ed.start_datetime) = %d';
@@ -798,6 +796,9 @@ function ec_users_get_user_concert_stats( int $user_id, array $args = array() ):
 		$prepare[] = sanitize_text_field( $args['date_from'] );
 	}
 	if ( ! empty( $args['date_to'] ) ) {
+		$past      = ec_users_build_event_timing_condition( 'past', ec_users_get_events_now( $blog_id ) );
+		$where[]   = $past['where'];
+		$prepare   = array_merge( $prepare, $past['prepare'] );
 		$where[]   = 'DATE(ed.start_datetime) <= %s';
 		$prepare[] = sanitize_text_field( $args['date_to'] );
 	}

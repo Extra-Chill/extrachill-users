@@ -119,12 +119,79 @@ class Test_Concert_History_Timing extends WP_UnitTestCase {
 		$this->assertNotContains( $this->events['multi_day'], wp_list_pluck( $past['shows'], 'event_id' ) );
 
 		$stats = ec_users_get_user_concert_stats( $this->user_id );
-		$this->assertSame( 3, $stats['total_shows'] );
-		$this->assertSame( array( '2026' => 2, '2025' => 1 ), $stats['shows_by_year'] );
-		$this->assertSame( 2, ec_users_get_user_concert_stats( $this->user_id, array( 'year' => 2026 ) )['total_shows'] );
+		$this->assertSame( 8, $stats['total_shows'] );
+		$this->assertSame( array( '2026' => 7, '2025' => 1 ), $stats['shows_by_year'] );
+		$this->assertSame( 7, ec_users_get_user_concert_stats( $this->user_id, array( 'year' => 2026 ) )['total_shows'] );
+	}
+
+	public function test_upcoming_only_owner_stats_remain_nonzero_with_future_year_option(): void {
+		$owner_id = self::factory()->user->create();
+		$this->track_event( 'Future Owner Show', '2027-02-10 20:00:00', null, $owner_id );
+		wp_set_current_user( $owner_id );
+
+		$stats = wp_get_ability( 'extrachill/get-user-concert-stats' )->execute( array( 'user_id' => $owner_id ) );
+
+		$this->assertSame( 1, $stats['total_shows'] );
+		$this->assertSame( array( '2027' => 1 ), $stats['shows_by_year'] );
+		$this->assertSame( 1, wp_get_ability( 'extrachill/get-user-shows' )->execute( array( 'user_id' => $owner_id, 'period' => 'upcoming' ) )['total'] );
+	}
+
+	public function test_ongoing_only_owner_stats_remain_nonzero(): void {
+		$owner_id = self::factory()->user->create();
+		$this->track_event( 'Ongoing Owner Show', '2026-07-18 20:00:00', '2026-07-20 01:00:00', $owner_id );
+		wp_set_current_user( $owner_id );
+
+		$stats = wp_get_ability( 'extrachill/get-user-concert-stats' )->execute( array( 'user_id' => $owner_id ) );
+
+		$this->assertSame( 1, $stats['total_shows'] );
+		$this->assertSame( array( '2026' => 1 ), $stats['shows_by_year'] );
+		$this->assertSame( 1, wp_get_ability( 'extrachill/get-user-shows' )->execute( array( 'user_id' => $owner_id, 'period' => 'upcoming' ) )['total'] );
+	}
+
+	public function test_owner_stats_and_year_filter_include_mixed_past_and_future_years(): void {
+		$owner_id = self::factory()->user->create();
+		$this->track_event( 'Past Mixed Show', '2024-05-10 20:00:00', '2024-05-10 23:00:00', $owner_id );
+		$this->track_event( 'Future Mixed Show', '2027-05-10 20:00:00', null, $owner_id );
+		wp_set_current_user( $owner_id );
+
+		$stats        = wp_get_ability( 'extrachill/get-user-concert-stats' )->execute( array( 'user_id' => $owner_id ) );
+		$future_stats = wp_get_ability( 'extrachill/get-user-concert-stats' )->execute(
+			array(
+				'user_id' => $owner_id,
+				'year'    => 2027,
+			)
+		);
+
+		$this->assertSame( 2, $stats['total_shows'] );
+		$this->assertSame( array( '2027' => 1, '2024' => 1 ), $stats['shows_by_year'] );
+		$this->assertSame( 1, $future_stats['total_shows'] );
+		$this->assertSame( array( '2027' => 1 ), $future_stats['shows_by_year'] );
+	}
+
+	public function test_public_date_bounded_stats_remain_canonically_past_only(): void {
+		$owner_id = self::factory()->user->create();
+		$this->track_event( 'Public Past Show', '2025-05-10 20:00:00', '2025-05-10 23:00:00', $owner_id );
+		$this->track_event( 'Public Ongoing Show', '2026-07-18 20:00:00', '2026-07-20 01:00:00', $owner_id );
+		$this->track_event( 'Public Future Show', '2027-05-10 20:00:00', null, $owner_id );
+		wp_set_current_user( 0 );
+
+		$stats = wp_get_ability( 'extrachill/get-user-concert-stats' )->execute(
+			array(
+				'user_id' => $owner_id,
+				'date_to' => '2026-07-19',
+			)
+		);
+
+		$this->assertSame( 1, $stats['total_shows'] );
+		$this->assertSame( array( '2025' => 1 ), $stats['shows_by_year'] );
 	}
 
 	public function test_exact_boundaries_and_missing_end_match_canonical_states(): void {
+		$past_condition = ec_users_build_event_timing_condition( 'past', $this->now );
+		$this->assertStringContainsString( 'start_datetime < %s', $past_condition['where'] );
+		$this->assertStringContainsString( 'COALESCE(ed.end_datetime, ed.start_datetime) < %s', $past_condition['where'] );
+		$this->assertStringNotContainsString( ' OR ', $past_condition['where'] );
+
 		$this->assertSame( 'upcoming', ec_users_get_event_timing( $this->events['later_today'] ) );
 		$this->assertSame( 'past', ec_users_get_event_timing( $this->events['ended_today'] ) );
 		$this->assertSame( 'ongoing', ec_users_get_event_timing( $this->events['overnight'] ) );
@@ -203,7 +270,7 @@ class Test_Concert_History_Timing extends WP_UnitTestCase {
 		$this->assertNotContains( 'past', wp_list_pluck( $owner_upcoming['shows'], 'timing' ) );
 	}
 
-	private function track_event( string $title, string $start_datetime, ?string $end_datetime = null ): int {
+	private function track_event( string $title, string $start_datetime, ?string $end_datetime = null, ?int $user_id = null ): int {
 		global $wpdb;
 
 		switch_to_blog( $this->events_blog_id );
@@ -226,7 +293,7 @@ class Test_Concert_History_Timing extends WP_UnitTestCase {
 			),
 			array( '%d', '%s', '%s', '%s' )
 		);
-		ec_users_mark_event( $this->user_id, $post_id, $this->events_blog_id );
+		ec_users_mark_event( $user_id ? $user_id : $this->user_id, $post_id, $this->events_blog_id );
 
 		return $post_id;
 	}
