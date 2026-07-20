@@ -80,11 +80,35 @@ class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 	}
 
 	public function test_token_registration_returns_account_with_pending_repair_status(): void {
+		$this->assert_token_registration_invitation_outcome( 'artist_membership_busy', 409, 'pending_repair', true );
+	}
+
+	public function test_token_registration_preserves_permanent_invitation_failure(): void {
+		$this->assert_token_registration_invitation_outcome( 'invalid_artist_invitation', 400, 'failed', false );
+	}
+
+	public function test_token_registration_preserves_manual_repair_invitation_failure(): void {
+		$this->assert_token_registration_invitation_outcome( 'artist_invitation_rollback_failed', 500, 'manual_repair', false );
+	}
+
+	public function test_browser_registration_reports_retryable_invitation_outcome(): void {
+		$this->assert_browser_invitation_outcome( 'artist_membership_busy', 409, 'pending_repair', true );
+	}
+
+	public function test_browser_registration_reports_permanent_invitation_outcome(): void {
+		$this->assert_browser_invitation_outcome( 'invalid_artist_invitation', 400, 'failed', false );
+	}
+
+	public function test_browser_registration_reports_manual_repair_invitation_outcome(): void {
+		$this->assert_browser_invitation_outcome( 'artist_invitation_rollback_failed', 500, 'manual_repair', false );
+	}
+
+	private function assert_token_registration_invitation_outcome( string $error_code, int $error_status, string $expected_status, bool $expected_retryable ): void {
 		$_SERVER['HTTP_EXTRACHILL_CLIENT'] = 'app';
 		$request_count                     = 0;
 		add_filter(
 			'pre_http_request',
-			static function () use ( &$request_count ) {
+			static function () use ( &$request_count, $error_code, $error_status ) {
 				++$request_count;
 				if ( 1 === $request_count ) {
 					return array(
@@ -104,14 +128,14 @@ class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 				}
 				return array(
 					'response' => array(
-						'code'    => 503,
-						'message' => 'Busy',
+						'code'    => $error_status,
+						'message' => 'Invitation failure',
 					),
 					'headers'  => array(),
 					'body'     => wp_json_encode(
 						array(
-							'code'    => 'artist_membership_busy',
-							'message' => 'Retry membership.',
+							'code'    => $error_code,
+							'message' => 'Precise invitation failure.',
 						)
 					),
 					'cookies'  => array(),
@@ -121,7 +145,7 @@ class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 			3
 		);
 
-		$email  = 'pending-repair@example.com';
+		$email  = sanitize_key( $error_code ) . '@example.com';
 		$result = extrachill_users_register_with_tokens(
 			array(
 				'email'            => $email,
@@ -134,13 +158,17 @@ class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 		);
 
 		$this->assertIsArray( $result );
-		$this->assertSame( 'pending_repair', $result['artist_invitation_status'] );
+		$this->assertSame( $expected_status, $result['artist_invitation_status'] );
+		$this->assertSame( $expected_retryable, $result['artist_invitation_retryable'] );
+		$this->assertSame( $error_code, $result['artist_invitation_error']['code'] );
+		$this->assertSame( 'Precise invitation failure.', $result['artist_invitation_error']['message'] );
+		$this->assertSame( $error_status, $result['artist_invitation_error']['status'] );
 		$this->assertNotFalse( email_exists( $email ) );
 		$this->assertSame( 2, $request_count );
 	}
 
-	public function test_browser_registration_logs_in_created_account_with_pending_repair_redirect(): void {
-		$user_id  = self::factory()->user->create( array( 'user_email' => 'browser-repair@example.com' ) );
+	private function assert_browser_invitation_outcome( string $error_code, int $error_status, string $expected_status, bool $expected_retryable ): void {
+		$user_id  = self::factory()->user->create( array( 'user_email' => sanitize_key( $error_code ) . '-browser@example.com' ) );
 		$redirect = new class( 'https://example.org/register' ) extends EC_Redirect_Handler {
 			/**
 			 * Captured redirect URL.
@@ -153,10 +181,17 @@ class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 				$this->captured_url = $url;
 			}
 		};
+		$outcome  = ec_users_classify_artist_invitation_error(
+			new WP_Error( $error_code, 'Precise invitation failure.', array( 'status' => $error_status ) )
+		);
 
-		extrachill_auto_login_new_user( $user_id, $redirect, null, '', true );
+		extrachill_auto_login_new_user( $user_id, $redirect, null, '', $outcome );
 
 		$this->assertSame( $user_id, get_current_user_id() );
-		$this->assertStringContainsString( 'artist_invitation=pending_repair', $redirect->captured_url );
+		$this->assertSame( $expected_status, $outcome['status'] );
+		$this->assertSame( $expected_retryable, $outcome['retryable'] );
+		$this->assertStringContainsString( 'artist_invitation=' . $expected_status, $redirect->captured_url );
+		$this->assertStringContainsString( 'artist_invitation_error=' . $error_code, $redirect->captured_url );
+		$this->assertStringContainsString( 'artist_invitation_error_status=' . $error_status, $redirect->captured_url );
 	}
 }

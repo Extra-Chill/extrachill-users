@@ -499,11 +499,11 @@ function extrachill_users_register_with_tokens( array $payload ) {
 	}
 
 	$processed_invite_artist_id = null;
-	$invitation_pending_repair  = false;
+	$invitation_outcome         = array();
 	if ( $has_artist_invitation ) {
 		$acceptance = ec_users_request_artist_invitation( $email, $invite_token, $invite_artist_id, (int) $user_id );
 		if ( is_wp_error( $acceptance ) ) {
-			$invitation_pending_repair = true;
+			$invitation_outcome = ec_users_classify_artist_invitation_error( $acceptance );
 		} else {
 			$processed_invite_artist_id = $invite_artist_id;
 		}
@@ -552,7 +552,11 @@ function extrachill_users_register_with_tokens( array $payload ) {
 		$response['invite_artist_id'] = (int) $processed_invite_artist_id;
 	}
 	if ( $has_artist_invitation ) {
-		$response['artist_invitation_status'] = $invitation_pending_repair ? 'pending_repair' : 'applied';
+		$response['artist_invitation_status'] = $invitation_outcome ? $invitation_outcome['status'] : 'applied';
+		if ( $invitation_outcome ) {
+			$response['artist_invitation_retryable'] = $invitation_outcome['retryable'];
+			$response['artist_invitation_error']     = $invitation_outcome['error'];
+		}
 	}
 
 	return $response;

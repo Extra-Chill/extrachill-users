@@ -102,11 +102,11 @@ function extrachill_handle_registration() {
 	}
 
 	$processed_invite_artist_id = null;
-	$invitation_pending_repair  = false;
+	$invitation_outcome         = array();
 	if ( $has_artist_invitation ) {
 		$acceptance = ec_users_request_artist_invitation( $email, $invite_token_posted, $invite_artist_id_posted, $user_id );
 		if ( is_wp_error( $acceptance ) ) {
-			$invitation_pending_repair = true;
+			$invitation_outcome = ec_users_classify_artist_invitation_error( $acceptance );
 		} else {
 			$processed_invite_artist_id = $invite_artist_id_posted;
 		}
@@ -121,7 +121,7 @@ function extrachill_handle_registration() {
 	}
 	// phpcs:enable WordPress.Security.NonceVerification.Missing
 
-	extrachill_auto_login_new_user( $user_id, $redirect, $processed_invite_artist_id, $success_redirect_url, $invitation_pending_repair );
+	extrachill_auto_login_new_user( $user_id, $redirect, $processed_invite_artist_id, $success_redirect_url, $invitation_outcome );
 }
 add_action( 'admin_post_nopriv_extrachill_register_user', 'extrachill_handle_registration' );
 add_action( 'admin_post_extrachill_register_user', 'extrachill_handle_registration' );
@@ -133,9 +133,9 @@ add_action( 'admin_post_extrachill_register_user', 'extrachill_handle_registrati
  * @param EC_Redirect_Handler $redirect                   Redirect handler instance.
  * @param int|null            $processed_invite_artist_id Artist ID if roster invitation was processed.
  * @param string              $success_redirect_url       Custom success redirect URL from block attribute.
- * @param bool                $invitation_pending_repair  Whether the invitation remains pending for retry.
+ * @param array               $invitation_outcome         Classified invitation failure after account creation.
  */
-function extrachill_auto_login_new_user( int $user_id, EC_Redirect_Handler $redirect, ?int $processed_invite_artist_id = null, string $success_redirect_url = '', bool $invitation_pending_repair = false ) {
+function extrachill_auto_login_new_user( int $user_id, EC_Redirect_Handler $redirect, ?int $processed_invite_artist_id = null, string $success_redirect_url = '', array $invitation_outcome = array() ) {
 	$user = get_user_by( 'id', $user_id );
 
 	if ( ! $user ) {
@@ -166,8 +166,13 @@ function extrachill_auto_login_new_user( int $user_id, EC_Redirect_Handler $redi
 	$onboarding_url = function_exists( 'ec_get_site_url' )
 		? ec_get_site_url( 'community' ) . '/onboarding/'
 		: home_url( '/onboarding/' );
-	if ( $invitation_pending_repair ) {
-		$onboarding_url = add_query_arg( 'artist_invitation', 'pending_repair', $onboarding_url );
+	if ( $invitation_outcome ) {
+		$query_args = array( 'artist_invitation' => $invitation_outcome['status'] );
+		if ( ! empty( $invitation_outcome['error'] ) ) {
+			$query_args['artist_invitation_error']        = $invitation_outcome['error']['code'];
+			$query_args['artist_invitation_error_status'] = $invitation_outcome['error']['status'];
+		}
+		$onboarding_url = add_query_arg( $query_args, $onboarding_url );
 	}
 
 	$redirect->redirect_to( $onboarding_url );

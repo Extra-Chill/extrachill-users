@@ -132,6 +132,55 @@ function ec_users_request_artist_invitation( $email, $token, $artist_id, $user_i
 }
 
 /**
+ * Classify an artist-owned invitation failure for a created account response.
+ *
+ * Unknown and permanent failures are never presented as client-retryable.
+ *
+ * @param WP_Error $error Artist invitation failure.
+ * @return array{status:string,retryable:bool,error:array{code:string,message:string,status:int}}
+ */
+function ec_users_classify_artist_invitation_error( WP_Error $error ) {
+	$code                = $error->get_error_code();
+	$data                = $error->get_error_data();
+	$http_status         = is_array( $data ) && isset( $data['status'] ) ? (int) $data['status'] : 500;
+	$retryable_codes     = array(
+		'artist_membership_busy',
+		'artist_site_unavailable',
+		'artist_roster_update_failed',
+		'user_membership_update_failed',
+		'artist_membership_retry_required',
+		'invitation_cleanup_failed',
+		'ec_cross_site_request_failed',
+	);
+	$manual_repair_codes = array(
+		'artist_membership_rollback_failed',
+		'artist_invitation_rollback_failed',
+		'artist_membership_partial_remove',
+	);
+
+	if ( in_array( $code, $retryable_codes, true ) ) {
+		$status    = 'pending_repair';
+		$retryable = true;
+	} elseif ( in_array( $code, $manual_repair_codes, true ) ) {
+		$status    = 'manual_repair';
+		$retryable = false;
+	} else {
+		$status    = 'failed';
+		$retryable = false;
+	}
+
+	return array(
+		'status'    => $status,
+		'retryable' => $retryable,
+		'error'     => array(
+			'code'    => $code,
+			'message' => $error->get_error_message(),
+			'status'  => $http_status,
+		),
+	);
+}
+
+/**
  * Check if user can create artist profiles
  *
  * @deprecated-soon Slated for migration to ec_user_can( 'create_artist_profile' )
