@@ -380,7 +380,19 @@ function extrachill_users_register_concert_tracking_abilities() {
 					'count_label' => array( 'type' => 'string' ),
 					'timing'      => array( 'type' => 'string' ),
 					'user_marked' => array( 'type' => 'boolean' ),
-					'attendees'   => array( 'type' => 'array' ),
+					'attendees'   => array(
+						'type'  => 'array',
+						'items' => array(
+							'type'       => 'object',
+							'properties' => array(
+								'user_id'      => array( 'type' => 'integer' ),
+								'display_name' => array( 'type' => 'string' ),
+								'avatar_url'   => array( 'type' => 'string' ),
+								'profile_url'  => array( 'type' => 'string' ),
+							),
+							'required'   => array( 'user_id', 'display_name', 'avatar_url', 'profile_url' ),
+						),
+					),
 				),
 				'required'   => array( 'count', 'count_label', 'timing', 'user_marked', 'attendees' ),
 			),

@@ -242,6 +242,10 @@ class Test_Concert_Tracking_Abilities extends WP_UnitTestCase {
 		$this->assertSame( EC_USERS_EVENT_ATTENDEE_LIMIT_MIN, $attendee_schema['minimum'] );
 		$this->assertSame( EC_USERS_EVENT_ATTENDEE_LIMIT_DEFAULT, $attendee_schema['default'] );
 		$this->assertSame( EC_USERS_EVENT_ATTENDEE_LIMIT_MAX, $attendee_schema['maximum'] );
+		$this->assertSame(
+			array( 'user_id', 'display_name', 'avatar_url', 'profile_url' ),
+			wp_get_ability( 'extrachill/get-event-attendance' )->get_output_schema()['properties']['attendees']['items']['required']
+		);
 	}
 
 	/**
@@ -277,9 +281,16 @@ class Test_Concert_Tracking_Abilities extends WP_UnitTestCase {
 	}
 
 	public function test_attendee_service_clamps_defaults_boundaries_and_malformed_values(): void {
-		$this->seed_attendees( 105 );
+		$seeded_user_ids = $this->seed_attendees( 105 );
 
-		$this->assertCount( 10, ec_users_get_event_attendees( $this->event_id, $this->events_blog_id ) );
+		$default = ec_users_get_event_attendees( $this->event_id, $this->events_blog_id );
+		$this->assertCount( 10, $default );
+		$this->assertSame( array_slice( $seeded_user_ids, 0, 10 ), wp_list_pluck( $default, 'user_id' ) );
+		$this->assertSame( array( 'user_id', 'display_name', 'avatar_url', 'profile_url' ), array_keys( $default[0] ) );
+		$this->assertIsInt( $default[0]['user_id'] );
+		$this->assertIsString( $default[0]['display_name'] );
+		$this->assertIsString( $default[0]['avatar_url'] );
+		$this->assertIsString( $default[0]['profile_url'] );
 		foreach ( array( 0, -10, 'not-a-number' ) as $malformed_limit ) {
 			$this->assertCount( 1, ec_users_get_event_attendees( $this->event_id, $this->events_blog_id, $malformed_limit ) );
 		}
@@ -423,14 +434,17 @@ class Test_Concert_Tracking_Abilities extends WP_UnitTestCase {
 		$wpdb->query( "DELETE FROM {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- trusted table helper.
 	}
 
-	private function seed_attendees( int $count ): void {
+	private function seed_attendees( int $count ): array {
 		global $wpdb;
-		$table = extrachill_users_concert_tracking_table_name();
+		$table    = extrachill_users_concert_tracking_table_name();
+		$user_ids = array();
 		for ( $index = 0; $index < $count; ++$index ) {
+			$user_id    = self::factory()->user->create();
+			$user_ids[] = $user_id;
 			$wpdb->insert(
 				$table,
 				array(
-					'user_id'    => self::factory()->user->create(),
+					'user_id'    => $user_id,
 					'event_id'   => $this->event_id,
 					'blog_id'    => $this->events_blog_id,
 					'created_at' => gmdate( 'Y-m-d H:i:s', time() - $index ),
@@ -438,5 +452,7 @@ class Test_Concert_Tracking_Abilities extends WP_UnitTestCase {
 				array( '%d', '%d', '%d', '%s' )
 			);
 		}
+
+		return $user_ids;
 	}
 }

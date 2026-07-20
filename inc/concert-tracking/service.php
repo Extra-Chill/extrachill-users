@@ -1070,7 +1070,7 @@ function ec_users_events_term_archive_url( string $slug, string $taxonomy, int $
  * @param int $event_id Event post ID.
  * @param int $blog_id Blog ID (default: current blog).
  * @param mixed $limit Max users to return (1-100). Default 10.
- * @return array Array of user data.
+ * @return array<int, array{user_id: int, display_name: string, avatar_url: string, profile_url: string}> Attendee data, newest mark first.
  */
 function ec_users_get_event_attendees( int $event_id, int $blog_id = 0, $limit = EC_USERS_EVENT_ATTENDEE_LIMIT_DEFAULT ): array {
 	global $wpdb;
@@ -1107,8 +1107,8 @@ function ec_users_get_event_attendees( int $event_id, int $blog_id = 0, $limit =
 
 		$attendees[] = array(
 			'user_id'      => (int) $user->ID,
-			'display_name' => $user->display_name,
-			'avatar_url'   => get_avatar_url( $user->ID, array( 'size' => 48 ) ),
+			'display_name' => (string) $user->display_name,
+			'avatar_url'   => (string) get_avatar_url( $user->ID, array( 'size' => 48 ) ),
 			'profile_url'  => $profile_url,
 		);
 	}
