@@ -90,31 +90,45 @@ function ec_get_artists_for_user( $user_id = null, $admin_override = false ) {
 }
 
 /**
- * Validate a pending artist invitation before creating a user account.
+ * Validate or accept an artist invitation on the artist site.
  *
  * @param string $email     Registration email.
  * @param string $token     Invitation token.
  * @param int    $artist_id Artist profile ID.
- * @return string|WP_Error Pending invitation ID or an error.
+ * @param int    $user_id   User ID when accepting after account creation.
+ * @return array|WP_Error Artist-owned invitation result or an error.
  */
-function ec_users_validate_registration_artist_invitation( $email, $token, $artist_id ) {
+function ec_users_request_artist_invitation( $email, $token, $artist_id, $user_id = 0 ) {
 	if ( ! $token || ! $artist_id ) {
 		return new WP_Error( 'invalid_artist_invitation', __( 'A complete artist invitation is required.', 'extrachill-users' ), array( 'status' => 400 ) );
 	}
-	if ( ! function_exists( 'ec_get_pending_invitations' ) || ! function_exists( 'ec_accept_artist_membership_invitation' ) ) {
+	if ( ! function_exists( 'ec_cross_site_rest_request' ) ) {
 		return new WP_Error( 'artist_invitation_dependency_missing', __( 'Artist invitations are temporarily unavailable.', 'extrachill-users' ), array( 'status' => 503 ) );
 	}
 
-	foreach ( ec_get_pending_invitations( $artist_id ) as $invite ) {
-		if ( isset( $invite['id'], $invite['token'], $invite['email'], $invite['status'] )
-			&& hash_equals( (string) $invite['token'], (string) $token )
-			&& strtolower( (string) $invite['email'] ) === strtolower( (string) $email )
-			&& 'invited_new_user' === $invite['status'] ) {
-			return (string) $invite['id'];
-		}
+	$input = array(
+		'artist_id' => absint( $artist_id ),
+		'email'     => sanitize_email( $email ),
+		'token'     => sanitize_text_field( $token ),
+	);
+	if ( $user_id ) {
+		$input['user_id'] = absint( $user_id );
 	}
 
-	return new WP_Error( 'invalid_artist_invitation', __( 'The artist invitation is invalid or expired.', 'extrachill-users' ), array( 'status' => 400 ) );
+	$force_loopback = static function () {
+		return true;
+	};
+	add_filter( 'ec_cross_site_use_http_loopback', $force_loopback, 10 );
+	try {
+		return ec_cross_site_rest_request(
+			'artist',
+			'POST',
+			'/wp-abilities/v1/abilities/extrachill/artist-invitation/run',
+			array( 'body' => array( 'input' => $input ) )
+		);
+	} finally {
+		remove_filter( 'ec_cross_site_use_http_loopback', $force_loopback, 10 );
+	}
 }
 
 /**

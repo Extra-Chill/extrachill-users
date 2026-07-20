@@ -58,12 +58,13 @@ function extrachill_handle_registration() {
 	$from_join               = isset( $_POST['from_join'] ) && 'true' === $_POST['from_join'];
 	$invite_token_posted     = isset( $_POST['invite_token'] ) ? sanitize_text_field( wp_unslash( $_POST['invite_token'] ) ) : '';
 	$invite_artist_id_posted = isset( $_POST['invite_artist_id'] ) ? absint( $_POST['invite_artist_id'] ) : 0;
-	$invite_id               = '';
+	$has_artist_invitation   = false;
 	if ( $invite_token_posted || $invite_artist_id_posted ) {
-		$invite_id = ec_users_validate_registration_artist_invitation( $email, $invite_token_posted, $invite_artist_id_posted );
-		if ( is_wp_error( $invite_id ) ) {
-			$redirect->error( $invite_id->get_error_message() );
+		$validation = ec_users_request_artist_invitation( $email, $invite_token_posted, $invite_artist_id_posted );
+		if ( is_wp_error( $validation ) ) {
+			$redirect->error( $validation->get_error_message() );
 		}
+		$has_artist_invitation = true;
 	}
 
 	$username = function_exists( 'ec_generate_username_from_email' )
@@ -101,12 +102,14 @@ function extrachill_handle_registration() {
 	}
 
 	$processed_invite_artist_id = null;
-	if ( $invite_id ) {
-		$acceptance = ec_accept_artist_membership_invitation( $user_id, $invite_artist_id_posted, $invite_id );
+	$invitation_pending_repair  = false;
+	if ( $has_artist_invitation ) {
+		$acceptance = ec_users_request_artist_invitation( $email, $invite_token_posted, $invite_artist_id_posted, $user_id );
 		if ( is_wp_error( $acceptance ) ) {
-			$redirect->error( $acceptance->get_error_message() );
+			$invitation_pending_repair = true;
+		} else {
+			$processed_invite_artist_id = $invite_artist_id_posted;
 		}
-		$processed_invite_artist_id = $invite_artist_id_posted;
 	}
 
 	$success_redirect_url = isset( $_POST['success_redirect_url'] ) ? wp_unslash( $_POST['success_redirect_url'] ) : '';
@@ -118,7 +121,7 @@ function extrachill_handle_registration() {
 	}
 	// phpcs:enable WordPress.Security.NonceVerification.Missing
 
-	extrachill_auto_login_new_user( $user_id, $redirect, $processed_invite_artist_id, $success_redirect_url );
+	extrachill_auto_login_new_user( $user_id, $redirect, $processed_invite_artist_id, $success_redirect_url, $invitation_pending_repair );
 }
 add_action( 'admin_post_nopriv_extrachill_register_user', 'extrachill_handle_registration' );
 add_action( 'admin_post_extrachill_register_user', 'extrachill_handle_registration' );
@@ -130,8 +133,9 @@ add_action( 'admin_post_extrachill_register_user', 'extrachill_handle_registrati
  * @param EC_Redirect_Handler $redirect                   Redirect handler instance.
  * @param int|null            $processed_invite_artist_id Artist ID if roster invitation was processed.
  * @param string              $success_redirect_url       Custom success redirect URL from block attribute.
+ * @param bool                $invitation_pending_repair  Whether the invitation remains pending for retry.
  */
-function extrachill_auto_login_new_user( int $user_id, EC_Redirect_Handler $redirect, ?int $processed_invite_artist_id = null, string $success_redirect_url = '' ) {
+function extrachill_auto_login_new_user( int $user_id, EC_Redirect_Handler $redirect, ?int $processed_invite_artist_id = null, string $success_redirect_url = '', bool $invitation_pending_repair = false ) {
 	$user = get_user_by( 'id', $user_id );
 
 	if ( ! $user ) {
@@ -162,6 +166,9 @@ function extrachill_auto_login_new_user( int $user_id, EC_Redirect_Handler $redi
 	$onboarding_url = function_exists( 'ec_get_site_url' )
 		? ec_get_site_url( 'community' ) . '/onboarding/'
 		: home_url( '/onboarding/' );
+	if ( $invitation_pending_repair ) {
+		$onboarding_url = add_query_arg( 'artist_invitation', 'pending_repair', $onboarding_url );
+	}
 
 	$redirect->redirect_to( $onboarding_url );
 }
