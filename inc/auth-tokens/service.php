@@ -456,6 +456,14 @@ function extrachill_users_register_with_tokens( array $payload ) {
 		}
 	}
 
+	$invite_id = '';
+	if ( $invite_token || $invite_artist_id ) {
+		$invite_id = ec_users_validate_registration_artist_invitation( $email, $invite_token, $invite_artist_id );
+		if ( is_wp_error( $invite_id ) ) {
+			return $invite_id;
+		}
+	}
+
 	$user_id = apply_filters( 'extrachill_create_community_user', false, $registration_data );
 	if ( is_wp_error( $user_id ) ) {
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Expected operational logging for failed auth/registration flows.
@@ -490,26 +498,13 @@ function extrachill_users_register_with_tokens( array $payload ) {
 	}
 
 	$processed_invite_artist_id = null;
-	if ( $invite_token && $invite_artist_id && function_exists( 'ec_get_pending_invitations' ) && function_exists( 'ec_add_artist_membership' ) && function_exists( 'ec_remove_pending_invitation' ) ) {
-		$pending_invitations         = ec_get_pending_invitations( $invite_artist_id );
-		$valid_invite_id_for_removal = null;
-
-		foreach ( $pending_invitations as $invite ) {
-			if ( isset( $invite['token'] ) && $invite['token'] === $invite_token &&
-				isset( $invite['email'] ) && strtolower( $invite['email'] ) === strtolower( $email ) &&
-				isset( $invite['status'] ) && 'invited_new_user' === $invite['status'] ) {
-				$valid_invite_id_for_removal = isset( $invite['id'] ) ? $invite['id'] : null;
-				break;
-			}
+	if ( $invite_id ) {
+		$acceptance = ec_accept_artist_membership_invitation( (int) $user_id, $invite_artist_id, $invite_id );
+		if ( is_wp_error( $acceptance ) ) {
+			return $acceptance;
 		}
-
-		if ( $valid_invite_id_for_removal ) {
-			if ( ec_add_artist_membership( (int) $user_id, $invite_artist_id ) ) {
-				ec_remove_pending_invitation( $invite_artist_id, $valid_invite_id_for_removal );
-				$processed_invite_artist_id = $invite_artist_id;
-				update_user_meta( (int) $user_id, 'onboarding_redirect_url', get_permalink( $invite_artist_id ) );
-			}
-		}
+		$processed_invite_artist_id = $invite_artist_id;
+		update_user_meta( (int) $user_id, 'onboarding_redirect_url', get_permalink( $invite_artist_id ) );
 	}
 
 	$user = get_user_by( 'id', (int) $user_id );

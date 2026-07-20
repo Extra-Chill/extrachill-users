@@ -55,7 +55,16 @@ function extrachill_handle_registration() {
 		$redirect->error( __( 'Registration source is missing. Please reload and try again.', 'extrachill-users' ) );
 	}
 
-	$from_join = isset( $_POST['from_join'] ) && 'true' === $_POST['from_join'];
+	$from_join               = isset( $_POST['from_join'] ) && 'true' === $_POST['from_join'];
+	$invite_token_posted     = isset( $_POST['invite_token'] ) ? sanitize_text_field( wp_unslash( $_POST['invite_token'] ) ) : '';
+	$invite_artist_id_posted = isset( $_POST['invite_artist_id'] ) ? absint( $_POST['invite_artist_id'] ) : 0;
+	$invite_id               = '';
+	if ( $invite_token_posted || $invite_artist_id_posted ) {
+		$invite_id = ec_users_validate_registration_artist_invitation( $email, $invite_token_posted, $invite_artist_id_posted );
+		if ( is_wp_error( $invite_id ) ) {
+			$redirect->error( $invite_id->get_error_message() );
+		}
+	}
 
 	$username = function_exists( 'ec_generate_username_from_email' )
 		? ec_generate_username_from_email( $email )
@@ -92,30 +101,12 @@ function extrachill_handle_registration() {
 	}
 
 	$processed_invite_artist_id = null;
-	$invite_token_posted        = isset( $_POST['invite_token'] ) ? sanitize_text_field( wp_unslash( $_POST['invite_token'] ) ) : null;
-	$invite_artist_id_posted    = isset( $_POST['invite_artist_id'] ) ? absint( $_POST['invite_artist_id'] ) : null;
-
-	if ( $invite_token_posted && $invite_artist_id_posted && function_exists( 'ec_get_pending_invitations' ) && function_exists( 'ec_add_artist_membership' ) && function_exists( 'ec_remove_pending_invitation' ) ) {
-		$pending_invitations         = ec_get_pending_invitations( $invite_artist_id_posted );
-		$valid_invite_data           = null;
-		$valid_invite_id_for_removal = null;
-
-		foreach ( $pending_invitations as $invite ) {
-			if ( isset( $invite['token'] ) && $invite['token'] === $invite_token_posted &&
-				isset( $invite['email'] ) && strtolower( $invite['email'] ) === strtolower( $email ) &&
-				isset( $invite['status'] ) && 'invited_new_user' === $invite['status'] ) {
-				$valid_invite_data           = $invite;
-				$valid_invite_id_for_removal = $invite['id'];
-				break;
-			}
+	if ( $invite_id ) {
+		$acceptance = ec_accept_artist_membership_invitation( $user_id, $invite_artist_id_posted, $invite_id );
+		if ( is_wp_error( $acceptance ) ) {
+			$redirect->error( $acceptance->get_error_message() );
 		}
-
-		if ( $valid_invite_data ) {
-			if ( ec_add_artist_membership( $user_id, $invite_artist_id_posted ) ) {
-				ec_remove_pending_invitation( $invite_artist_id_posted, $valid_invite_id_for_removal );
-				$processed_invite_artist_id = $invite_artist_id_posted;
-			}
-		}
+		$processed_invite_artist_id = $invite_artist_id_posted;
 	}
 
 	$success_redirect_url = isset( $_POST['success_redirect_url'] ) ? wp_unslash( $_POST['success_redirect_url'] ) : '';

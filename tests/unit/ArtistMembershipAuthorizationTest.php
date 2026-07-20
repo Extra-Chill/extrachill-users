@@ -84,12 +84,17 @@ class Test_Artist_Membership_Authorization extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_published_artist_post_author_fallback_is_preserved(): void {
-		$user_id    = self::factory()->user->create();
-		$artist_id  = $this->create_artist( $user_id );
-		$private_id = $this->create_artist( $user_id, 'private' );
+	public function test_former_post_author_cannot_manage_without_reciprocal_membership(): void {
+		$user_id   = self::factory()->user->create();
+		$artist_id = $this->create_artist( $user_id );
 
+		$this->assertFalse( ec_can_manage_artist( $user_id, $artist_id ) );
+
+		update_user_meta( $user_id, '_artist_profile_ids', array( $artist_id ) );
+		$this->set_artist_members( $artist_id, array( $user_id ) );
 		$this->assertTrue( ec_can_manage_artist( $user_id, $artist_id ) );
-		$this->assertFalse( ec_can_manage_artist( $user_id, $private_id ) );
+
+		$this->set_artist_members( $artist_id, array() );
+		$this->assertFalse( ec_can_manage_artist( $user_id, $artist_id ) );
 	}
 }

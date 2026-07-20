@@ -90,6 +90,34 @@ function ec_get_artists_for_user( $user_id = null, $admin_override = false ) {
 }
 
 /**
+ * Validate a pending artist invitation before creating a user account.
+ *
+ * @param string $email     Registration email.
+ * @param string $token     Invitation token.
+ * @param int    $artist_id Artist profile ID.
+ * @return string|WP_Error Pending invitation ID or an error.
+ */
+function ec_users_validate_registration_artist_invitation( $email, $token, $artist_id ) {
+	if ( ! $token || ! $artist_id ) {
+		return new WP_Error( 'invalid_artist_invitation', __( 'A complete artist invitation is required.', 'extrachill-users' ), array( 'status' => 400 ) );
+	}
+	if ( ! function_exists( 'ec_get_pending_invitations' ) || ! function_exists( 'ec_accept_artist_membership_invitation' ) ) {
+		return new WP_Error( 'artist_invitation_dependency_missing', __( 'Artist invitations are temporarily unavailable.', 'extrachill-users' ), array( 'status' => 503 ) );
+	}
+
+	foreach ( ec_get_pending_invitations( $artist_id ) as $invite ) {
+		if ( isset( $invite['id'], $invite['token'], $invite['email'], $invite['status'] )
+			&& hash_equals( (string) $invite['token'], (string) $token )
+			&& strtolower( (string) $invite['email'] ) === strtolower( (string) $email )
+			&& 'invited_new_user' === $invite['status'] ) {
+			return (string) $invite['id'];
+		}
+	}
+
+	return new WP_Error( 'invalid_artist_invitation', __( 'The artist invitation is invalid or expired.', 'extrachill-users' ), array( 'status' => 400 ) );
+}
+
+/**
  * Check if user can create artist profiles
  *
  * @deprecated-soon Slated for migration to ec_user_can( 'create_artist_profile' )
@@ -179,7 +207,6 @@ function ec_get_latest_artist_for_user( $user_id = null ) {
  * published artist profile. Returns true if the user is:
  * - An administrator (manage_options capability)
  * - A validated reciprocal roster member
- * - The post author of the artist profile (legacy compatibility)
  *
  * @deprecated-soon Slated for migration to ec_user_can( 'manage_artist', [ 'artist_id' => $id ] )
  *                  and deletion per Extra-Chill/extrachill-users#60 (pending the
@@ -210,7 +237,6 @@ function ec_can_manage_artist( $user_id = null, $artist_id = null ) {
 		if ( ! $post instanceof WP_Post || 'artist_profile' !== $post->post_type || 'publish' !== $post->post_status ) {
 			return false;
 		}
-		$is_post_author = (int) $post->post_author === (int) $user_id;
 	} finally {
 		restore_current_blog();
 	}
@@ -219,11 +245,7 @@ function ec_can_manage_artist( $user_id = null, $artist_id = null ) {
 		return true;
 	}
 
-	if ( in_array( (int) $artist_id, ec_get_artists_for_user( $user_id ), true ) ) {
-		return true;
-	}
-
-	return $is_post_author;
+	return in_array( (int) $artist_id, ec_get_artists_for_user( $user_id ), true );
 }
 
 /**
