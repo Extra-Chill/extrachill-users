@@ -22,7 +22,24 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 	 */
 	protected function setUp(): void {
 		parent::setUp();
+		$constants = array(
+			'EC_ANALYTICS_EVENT_ARTIST_ACCESS_GRANTED' => 'artist_access_granted',
+			'EC_ANALYTICS_ARTIST_ACCESS_GRANTED_SOURCE_ONBOARDING' => 'onboarding',
+			'EC_ANALYTICS_EVENT_ONBOARDING_COMPLETED'  => 'onboarding_completed',
+			'EC_ANALYTICS_EVENT_ONBOARDING_REMINDER_RECOVERED' => 'onboarding_reminder_recovered',
+			'EC_ANALYTICS_EVENT_ONBOARDING_SUBMISSION_FAILED' => 'onboarding_submission_failed',
+		);
+		foreach ( $constants as $constant => $value ) {
+			if ( ! defined( $constant ) ) {
+				define( $constant, $value );
+			}
+		}
+		if ( ! defined( 'EC_ANALYTICS_ARTIST_ACCESS_GRANTED_METHODS' ) ) {
+			define( 'EC_ANALYTICS_ARTIST_ACCESS_GRANTED_METHODS', array( 'artist', 'professional', 'artist_and_professional' ) );
+		}
 		$GLOBALS['ec_onboarding_grant_events'] = array();
+		$locks                                 = &ec_users_onboarding_lock_registry();
+		$locks                                 = array();
 
 		if ( ! wp_has_ability( 'extrachill/track-analytics-event' ) ) {
 			wp_register_ability(
@@ -48,6 +65,8 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 	 * Remove analytics fixtures.
 	 */
 	protected function tearDown(): void {
+		$locks = &ec_users_onboarding_lock_registry();
+		$locks = array();
 		if ( $this->registered_fake_analytics ) {
 			wp_unregister_ability( 'extrachill/track-analytics-event' );
 		}
@@ -92,6 +111,55 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 	}
 
 	/**
+	 * A same-request contender cannot reenter an owned transition lock.
+	 */
+	public function test_transition_lock_rejects_reentrant_owner(): void {
+		$user_id = $this->create_onboarding_user( 'grantlock' );
+		$lock    = ec_users_acquire_onboarding_lock( $user_id );
+		$this->assertNotWPError( $lock );
+
+		try {
+			$contender = ec_users_acquire_onboarding_lock( $user_id );
+		} finally {
+			ec_users_release_onboarding_lock( $user_id, $lock );
+		}
+
+		$this->assertWPError( $contender );
+		$this->assertSame( 'onboarding_transition_locked', $contender->get_error_code() );
+		$this->assertSame( 'retry', $contender->get_error_data()['classification'] );
+		$this->assertTrue( $contender->get_error_data()['retryable'] );
+	}
+
+	/**
+	 * A reentrant completion loses the lock race and only the owner emits.
+	 */
+	public function test_reentrant_completion_has_one_transition_winner(): void {
+		$user_id           = $this->create_onboarding_user( 'grantreentrant' );
+		$inside_transition = false;
+		$reentrant_result  = null;
+		$reenter           = function ( $check, $object_id, $meta_key ) use ( $user_id, &$inside_transition, &$reentrant_result ) {
+			if ( $user_id === (int) $object_id && 'user_is_artist' === $meta_key && ! $inside_transition ) {
+				$inside_transition = true;
+				$reentrant_result  = $this->complete( $user_id, true, false );
+			}
+			return $check;
+		};
+		add_filter( 'add_user_metadata', $reenter, 10, 3 );
+
+		try {
+			$result = $this->complete( $user_id, true, false );
+		} finally {
+			remove_filter( 'add_user_metadata', $reenter, 10 );
+		}
+
+		$this->assertNotWPError( $result );
+		$this->assertWPError( $reentrant_result );
+		$this->assertSame( 'onboarding_transition_locked', $reentrant_result->get_error_code() );
+		$this->assertCount( 1, $this->grant_events() );
+		$this->assertSame( 'delivered', get_user_meta( $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META, true )['status'] );
+	}
+
+	/**
 	 * Existing access, including a partial prior attempt, is not a conversion.
 	 */
 	public function test_already_granted_user_does_not_emit(): void {
@@ -126,9 +194,54 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 
 		$this->assertWPError( $result );
 		$this->assertSame( 'onboarding_state_update_failed', $result->get_error_code() );
+		$this->assertSame( 'retry', $result->get_error_data()['classification'] );
+		$this->assertTrue( $result->get_error_data()['retryable'] );
 		$this->assertSame( '0', get_user_meta( $user_id, 'onboarding_completed', true ) );
 		$this->assertFalse( metadata_exists( 'user', $user_id, 'user_is_artist' ) );
 		$this->assertFalse( metadata_exists( 'user', $user_id, 'user_is_professional' ) );
+		$this->assertFalse( metadata_exists( 'user', $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META ) );
+		$this->assertCount( 0, $this->grant_events() );
+	}
+
+	/**
+	 * A failed rollback is classified for repair and cannot lose conversion.
+	 */
+	public function test_failed_rollback_requires_repair_and_blocks_silent_retry(): void {
+		$user_id          = $this->create_onboarding_user( 'grantrollbackfailure' );
+		$block_completion = static function ( $check, $object_id, $meta_key, $meta_value ) use ( $user_id ) {
+			if ( $user_id === (int) $object_id && 'onboarding_completed' === $meta_key && '1' === $meta_value ) {
+				return false;
+			}
+			return $check;
+		};
+		$block_rollback   = static function ( $check, $object_id, $meta_key ) use ( $user_id ) {
+			if ( $user_id === (int) $object_id && 'user_is_artist' === $meta_key ) {
+				return false;
+			}
+			return $check;
+		};
+		add_filter( 'update_user_metadata', $block_completion, 10, 4 );
+		add_filter( 'delete_user_metadata', $block_rollback, 10, 3 );
+
+		try {
+			$result = $this->complete( $user_id, true, false );
+		} finally {
+			remove_filter( 'update_user_metadata', $block_completion, 10 );
+			remove_filter( 'delete_user_metadata', $block_rollback, 10 );
+		}
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'onboarding_state_rollback_failed', $result->get_error_code() );
+		$this->assertSame( 'manual_repair', $result->get_error_data()['classification'] );
+		$this->assertFalse( $result->get_error_data()['retryable'] );
+		$this->assertSame( '1', get_user_meta( $user_id, 'user_is_artist', true ) );
+		$this->assertSame( 'repair_required', get_user_meta( $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META, true )['status'] );
+		$this->assertCount( 0, $this->grant_events() );
+
+		$retry = $this->complete( $user_id, true, false );
+		$this->assertWPError( $retry );
+		$this->assertSame( 'onboarding_grant_repair_required', $retry->get_error_code() );
+		$this->assertSame( 'manual_repair', $retry->get_error_data()['classification'] );
 		$this->assertCount( 0, $this->grant_events() );
 	}
 
