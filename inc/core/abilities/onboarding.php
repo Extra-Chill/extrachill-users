@@ -259,6 +259,82 @@ function ec_users_write_onboarding_grant_state( $user_id, array $next, array $cu
 }
 
 /**
+ * Reconcile an incomplete pending grant against the current bounded intent.
+ *
+ * When no access persisted, the retry may safely replace or remove stale
+ * intent. Existing access makes a changed intent ambiguous and must fail
+ * closed rather than relabel the transition.
+ *
+ * @param int   $user_id             User ID.
+ * @param array $state               Current grant receipt.
+ * @param bool  $is_artist           Current artist intent.
+ * @param bool  $is_professional     Current professional intent.
+ * @return array|WP_Error Reconciled receipt or error.
+ */
+function ec_users_reconcile_pending_onboarding_grant( $user_id, array $state, $is_artist, $is_professional ) {
+	if ( 'pending' !== ( $state['status'] ?? '' ) ) {
+		return $state;
+	}
+
+	$has_artist       = '1' === get_user_meta( $user_id, 'user_is_artist', true );
+	$has_professional = '1' === get_user_meta( $user_id, 'user_is_professional', true );
+	$wants_access     = $is_artist || $is_professional;
+	$current_method   = $wants_access ? ec_users_get_onboarding_artist_grant_method( $is_artist, $is_professional ) : '';
+	$receipt_method   = (string) ( $state['method'] ?? '' );
+
+	if ( $has_artist || $has_professional ) {
+		$stored_method = ec_users_get_onboarding_artist_grant_method( $has_artist, $has_professional );
+		if ( $stored_method !== $receipt_method || $current_method !== $stored_method ) {
+			return new WP_Error(
+				'onboarding_grant_intent_repair_required',
+				__( 'Stored onboarding access no longer matches the pending grant and requires manual reconciliation.', 'extrachill-users' ),
+				array(
+					'status'         => 500,
+					'classification' => 'manual_repair',
+					'retryable'      => false,
+				)
+			);
+		}
+		return $state;
+	}
+
+	if ( ! $wants_access ) {
+		$deleted = delete_user_meta( $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META, $state );
+		if ( $deleted && ! metadata_exists( 'user', $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META ) ) {
+			return array();
+		}
+		return new WP_Error(
+			'onboarding_grant_intent_update_failed',
+			__( 'The stale onboarding grant could not be cleared. Please retry.', 'extrachill-users' ),
+			array(
+				'status'         => 500,
+				'classification' => 'retry',
+				'retryable'      => true,
+			)
+		);
+	}
+
+	if ( $current_method === $receipt_method ) {
+		return $state;
+	}
+	$next           = $state;
+	$next['method'] = $current_method;
+	if ( ec_users_write_onboarding_grant_state( $user_id, $next, $state ) ) {
+		return $next;
+	}
+
+	return new WP_Error(
+		'onboarding_grant_intent_update_failed',
+		__( 'The onboarding grant intent could not be updated. Please retry.', 'extrachill-users' ),
+		array(
+			'status'         => 500,
+			'classification' => 'retry',
+			'retryable'      => true,
+		)
+	);
+}
+
+/**
  * Restore transition metadata and verify every resulting value.
  *
  * @param int   $user_id      User ID.
@@ -439,6 +515,23 @@ function extrachill_users_ability_complete_onboarding( $input ) {
 			}
 			return ec_users_onboarding_error( 'already_completed', __( 'Onboarding already completed.', 'extrachill-users' ), $user_id );
 		}
+		if ( ! empty( $grant_state ) ) {
+			$grant_state = ec_users_reconcile_pending_onboarding_grant( $user_id, $grant_state, $user_is_artist, $user_is_professional );
+			if ( is_wp_error( $grant_state ) ) {
+				return $grant_state;
+			}
+			if ( ! empty( $grant_state ) && 'pending' !== ( $grant_state['status'] ?? '' ) ) {
+				return new WP_Error(
+					'onboarding_grant_repair_required',
+					__( 'The onboarding access grant requires manual reconciliation.', 'extrachill-users' ),
+					array(
+						'status'         => 500,
+						'classification' => 'manual_repair',
+						'retryable'      => false,
+					)
+				);
+			}
+		}
 
 		// Update username in database.
 		global $wpdb;
@@ -486,16 +579,6 @@ function extrachill_users_ability_complete_onboarding( $input ) {
 				);
 			}
 			$new_grant_state = true;
-		} elseif ( ! empty( $grant_state ) && 'pending' !== ( $grant_state['status'] ?? '' ) && 'delivered' !== ( $grant_state['status'] ?? '' ) ) {
-			return new WP_Error(
-				'onboarding_grant_repair_required',
-				__( 'The onboarding access grant requires manual reconciliation.', 'extrachill-users' ),
-				array(
-					'status'         => 500,
-					'classification' => 'manual_repair',
-					'retryable'      => false,
-				)
-			);
 		}
 
 		// Persist access and completion as one verified transition. Restoring these

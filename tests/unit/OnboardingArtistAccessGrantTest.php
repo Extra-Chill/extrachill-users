@@ -175,6 +175,129 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 	}
 
 	/**
+	 * An interrupted pre-persistence receipt adopts the current retry intent.
+	 *
+	 * @dataProvider changed_incomplete_intent_provider
+	 *
+	 * @param string $initial_method Initial stale method.
+	 * @param bool   $artist         Retry artist intent.
+	 * @param bool   $professional   Retry professional intent.
+	 * @param string $expected       Expected emitted method, or empty for none.
+	 */
+	public function test_incomplete_pending_receipt_uses_current_retry_intent( $initial_method, $artist, $professional, $expected ): void {
+		$user_id = $this->create_onboarding_user( 'grantintent' . str_replace( '_', '', $initial_method ) . $expected );
+		update_user_meta(
+			$user_id,
+			EC_USERS_ONBOARDING_ARTIST_GRANT_META,
+			array(
+				'status'     => 'pending',
+				'method'     => $initial_method,
+				'created_at' => time(),
+			)
+		);
+
+		$result = $this->complete( $user_id, $artist, $professional );
+		$events = $this->grant_events();
+
+		$this->assertNotWPError( $result );
+		if ( '' === $expected ) {
+			$this->assertCount( 0, $events );
+			$this->assertFalse( metadata_exists( 'user', $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META ) );
+			return;
+		}
+		$this->assertCount( 1, $events );
+		$this->assertSame( $expected, $events[0]['event_data']['method'] );
+		$this->assertSame( 'delivered', get_user_meta( $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META, true )['status'] );
+	}
+
+	/**
+	 * Changed incomplete intent cases.
+	 *
+	 * @return array<string,array{string,bool,bool,string}>
+	 */
+	public function changed_incomplete_intent_provider() {
+		return array(
+			'professional to artist' => array( 'professional', true, false, 'artist' ),
+			'artist to professional' => array( 'artist', false, true, 'professional' ),
+			'artist to both'         => array( 'artist', true, true, 'artist_and_professional' ),
+			'both to neither'        => array( 'artist_and_professional', false, false, '' ),
+		);
+	}
+
+	/**
+	 * Persisted partial access plus changed intent requires reconciliation.
+	 */
+	public function test_incomplete_pending_receipt_rejects_changed_persisted_access(): void {
+		$user_id = $this->create_onboarding_user( 'grantintentambiguous' );
+		update_user_meta( $user_id, 'user_is_artist', '1' );
+		update_user_meta(
+			$user_id,
+			EC_USERS_ONBOARDING_ARTIST_GRANT_META,
+			array(
+				'status'     => 'pending',
+				'method'     => 'artist',
+				'created_at' => time(),
+			)
+		);
+
+		$result = $this->complete( $user_id, false, true );
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'onboarding_grant_intent_repair_required', $result->get_error_code() );
+		$this->assertSame( 'manual_repair', $result->get_error_data()['classification'] );
+		$this->assertFalse( $result->get_error_data()['retryable'] );
+		$this->assertSame( 'pending', get_user_meta( $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META, true )['status'] );
+		$this->assertCount( 0, $this->grant_events() );
+	}
+
+	/**
+	 * A completed pending receipt emits the method that actually persisted.
+	 *
+	 * @dataProvider changed_completed_intent_provider
+	 *
+	 * @param string $actual_method Actual persisted grant method.
+	 * @param bool   $artist        Retry artist intent.
+	 * @param bool   $professional  Retry professional intent.
+	 */
+	public function test_completed_pending_receipt_preserves_actual_transition( $actual_method, $artist, $professional ): void {
+		$user_id = $this->create_onboarding_user( 'grantactual' . str_replace( '_', '', $actual_method ) );
+		update_user_meta( $user_id, 'user_is_artist', in_array( $actual_method, array( 'artist', 'artist_and_professional' ), true ) ? '1' : '0' );
+		update_user_meta( $user_id, 'user_is_professional', in_array( $actual_method, array( 'professional', 'artist_and_professional' ), true ) ? '1' : '0' );
+		update_user_meta( $user_id, 'onboarding_completed', '1' );
+		update_user_meta(
+			$user_id,
+			EC_USERS_ONBOARDING_ARTIST_GRANT_META,
+			array(
+				'status'     => 'pending',
+				'method'     => $actual_method,
+				'created_at' => time(),
+			)
+		);
+
+		$result = $this->complete( $user_id, $artist, $professional );
+		$events = $this->grant_events();
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'already_completed', $result->get_error_code() );
+		$this->assertCount( 1, $events );
+		$this->assertSame( $actual_method, $events[0]['event_data']['method'] );
+	}
+
+	/**
+	 * Changed post-persistence intent cases.
+	 *
+	 * @return array<string,array{string,bool,bool}>
+	 */
+	public function changed_completed_intent_provider() {
+		return array(
+			'artist then professional' => array( 'artist', false, true ),
+			'professional then artist' => array( 'professional', true, false ),
+			'both then artist'         => array( 'artist_and_professional', true, false ),
+			'artist then neither'      => array( 'artist', false, false ),
+		);
+	}
+
+	/**
 	 * A same-request contender cannot reenter an owned transition lock.
 	 */
 	public function test_transition_lock_rejects_reentrant_owner(): void {
