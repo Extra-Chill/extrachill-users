@@ -178,6 +178,9 @@ function extrachill_users_ability_complete_onboarding( $input ) {
 		return ec_users_onboarding_error( 'invalid_user', __( 'Invalid user.', 'extrachill-users' ), $user_id );
 	}
 
+	$had_artist_access = '1' === get_user_meta( $user_id, 'user_is_artist', true )
+		|| '1' === get_user_meta( $user_id, 'user_is_professional', true );
+
 	if ( function_exists( 'ec_is_onboarding_complete' ) && ec_is_onboarding_complete( $user_id ) ) {
 		return ec_users_onboarding_error( 'already_completed', __( 'Onboarding already completed.', 'extrachill-users' ), $user_id );
 	}
@@ -222,6 +225,7 @@ function extrachill_users_ability_complete_onboarding( $input ) {
 	// Update username in database.
 	global $wpdb;
 
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Updating the core user row is the onboarding operation.
 	$result = $wpdb->update(
 		$wpdb->users,
 		array(
@@ -243,11 +247,46 @@ function extrachill_users_ability_complete_onboarding( $input ) {
 	}
 	extrachill_users_set_local_scene_visibility( $user_id, $visibility );
 
-	// Set flags and mark complete.
+	// Persist access and completion as one verified transition. Restoring these
+	// values on failure prevents a partial grant from becoming an unmeasurable
+	// retry that appears already granted.
+	$transition_keys = array(
+		'user_is_artist',
+		'user_is_professional',
+		'onboarding_completed',
+		'onboarding_completed_at',
+	);
+	$previous_meta   = array();
+	foreach ( $transition_keys as $meta_key ) {
+		$previous_meta[ $meta_key ] = array(
+			'exists' => metadata_exists( 'user', $user_id, $meta_key ),
+			'value'  => get_user_meta( $user_id, $meta_key, true ),
+		);
+	}
+	$completed_at = time();
+
 	update_user_meta( $user_id, 'user_is_artist', $user_is_artist ? '1' : '0' );
 	update_user_meta( $user_id, 'user_is_professional', $user_is_professional ? '1' : '0' );
 	update_user_meta( $user_id, 'onboarding_completed', '1' );
-	update_user_meta( $user_id, 'onboarding_completed_at', time() );
+	update_user_meta( $user_id, 'onboarding_completed_at', $completed_at );
+
+	$stored_completed_at  = (int) get_user_meta( $user_id, 'onboarding_completed_at', true );
+	$transition_persisted = ( $user_is_artist ? '1' : '0' ) === get_user_meta( $user_id, 'user_is_artist', true )
+		&& ( $user_is_professional ? '1' : '0' ) === get_user_meta( $user_id, 'user_is_professional', true )
+		&& '1' === get_user_meta( $user_id, 'onboarding_completed', true )
+		&& $stored_completed_at === $completed_at;
+
+	if ( ! $transition_persisted ) {
+		foreach ( $previous_meta as $meta_key => $previous ) {
+			if ( $previous['exists'] ) {
+				update_user_meta( $user_id, $meta_key, $previous['value'] );
+			} else {
+				delete_user_meta( $user_id, $meta_key );
+			}
+		}
+
+		return ec_users_onboarding_error( 'onboarding_state_update_failed', __( 'Failed to save onboarding state.', 'extrachill-users' ), $user_id );
+	}
 
 	clean_user_cache( $user_id );
 
@@ -262,6 +301,10 @@ function extrachill_users_ability_complete_onboarding( $input ) {
 	 * @param array $input   Onboarding data.
 	 */
 	do_action( 'ec_onboarding_completed', $user_id, $input );
+
+	if ( ! $had_artist_access && ( $user_is_artist || $user_is_professional ) ) {
+		ec_users_emit_onboarding_artist_access_granted( $user_id, $user_is_artist, $user_is_professional );
+	}
 
 	$event_data = array(
 		'has_local_scene' => '' !== $local_scene,
