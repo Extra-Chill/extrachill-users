@@ -37,9 +37,10 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 		if ( ! defined( 'EC_ANALYTICS_ARTIST_ACCESS_GRANTED_METHODS' ) ) {
 			define( 'EC_ANALYTICS_ARTIST_ACCESS_GRANTED_METHODS', array( 'artist', 'professional', 'artist_and_professional' ) );
 		}
-		$GLOBALS['ec_onboarding_grant_events'] = array();
-		$locks                                 = &ec_users_onboarding_lock_registry();
-		$locks                                 = array();
+		$GLOBALS['ec_onboarding_grant_events']  = array();
+		$GLOBALS['ec_onboarding_grant_failure'] = false;
+		$locks                                  = &ec_users_onboarding_lock_registry();
+		$locks                                  = array();
 
 		if ( ! wp_has_ability( 'extrachill/track-analytics-event' ) ) {
 			wp_register_ability(
@@ -52,6 +53,9 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 					'output_schema'       => array( 'type' => 'integer' ),
 					'permission_callback' => '__return_true',
 					'execute_callback'    => static function ( $input ) {
+						if ( ! empty( $GLOBALS['ec_onboarding_grant_failure'] ) && EC_ANALYTICS_EVENT_ARTIST_ACCESS_GRANTED === $input['event_type'] ) {
+							return 0;
+						}
 						$GLOBALS['ec_onboarding_grant_events'][] = $input;
 						return count( $GLOBALS['ec_onboarding_grant_events'] );
 					},
@@ -70,7 +74,7 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 		if ( $this->registered_fake_analytics ) {
 			wp_unregister_ability( 'extrachill/track-analytics-event' );
 		}
-		unset( $GLOBALS['ec_onboarding_grant_events'] );
+		unset( $GLOBALS['ec_onboarding_grant_events'], $GLOBALS['ec_onboarding_grant_failure'] );
 		parent::tearDown();
 	}
 
@@ -107,6 +111,66 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 
 		$this->assertWPError( $replay );
 		$this->assertSame( 'already_completed', $replay->get_error_code() );
+		$this->assertCount( 1, $this->grant_events() );
+	}
+
+	/**
+	 * A confirmed delivery failure returns to pending and succeeds once on retry.
+	 */
+	public function test_pending_receipt_recovers_delivery_once_on_retry(): void {
+		$user_id = $this->create_onboarding_user( 'grantdeliveryretry' );
+
+		$GLOBALS['ec_onboarding_grant_failure'] = true;
+		$failed                                 = $this->complete( $user_id, true, false );
+
+		$GLOBALS['ec_onboarding_grant_failure'] = false;
+
+		$this->assertWPError( $failed );
+		$this->assertSame( 'onboarding_grant_delivery_failed', $failed->get_error_code() );
+		$this->assertSame( 'retry', $failed->get_error_data()['classification'] );
+		$this->assertSame( 'pending', get_user_meta( $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META, true )['status'] );
+		$this->assertCount( 0, $this->grant_events() );
+
+		$retry = $this->complete( $user_id, true, false );
+		$this->assertWPError( $retry );
+		$this->assertSame( 'already_completed', $retry->get_error_code() );
+		$this->assertSame( 'delivered', get_user_meta( $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META, true )['status'] );
+		$this->assertCount( 1, $this->grant_events() );
+	}
+
+	/**
+	 * An ambiguous post-delivery receipt remains reserved and never re-emits.
+	 */
+	public function test_reserved_receipt_requires_repair_without_duplicate_delivery(): void {
+		$user_id       = $this->create_onboarding_user( 'grantreserved' );
+		$block_receipt = static function ( $check, $object_id, $meta_key, $meta_value ) use ( $user_id ) {
+			if (
+				$user_id === (int) $object_id
+				&& EC_USERS_ONBOARDING_ARTIST_GRANT_META === $meta_key
+				&& is_array( $meta_value )
+				&& 'delivered' === ( $meta_value['status'] ?? '' )
+			) {
+				return false;
+			}
+			return $check;
+		};
+		add_filter( 'update_user_metadata', $block_receipt, 10, 4 );
+
+		try {
+			$result = $this->complete( $user_id, true, false );
+		} finally {
+			remove_filter( 'update_user_metadata', $block_receipt, 10 );
+		}
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'onboarding_grant_repair_required', $result->get_error_code() );
+		$this->assertSame( 'manual_repair', $result->get_error_data()['classification'] );
+		$this->assertSame( 'reserved', get_user_meta( $user_id, EC_USERS_ONBOARDING_ARTIST_GRANT_META, true )['status'] );
+		$this->assertCount( 1, $this->grant_events() );
+
+		$retry = $this->complete( $user_id, true, false );
+		$this->assertWPError( $retry );
+		$this->assertSame( 'onboarding_grant_repair_required', $retry->get_error_code() );
 		$this->assertCount( 1, $this->grant_events() );
 	}
 
