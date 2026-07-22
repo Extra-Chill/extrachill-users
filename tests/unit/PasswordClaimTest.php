@@ -6,7 +6,7 @@
 class Test_Password_Claim extends WP_UnitTestCase {
 
 	private function create_user( bool $unclaimed = true ): WP_User {
-		$user_id = self::factory()->user->create();
+		$user_id = self::factory()->user->create( array( 'user_pass' => 'original-password' ) );
 
 		if ( $unclaimed ) {
 			update_user_meta( $user_id, 'ec_unclaimed', 1 );
@@ -15,38 +15,78 @@ class Test_Password_Claim extends WP_UnitTestCase {
 		return get_user_by( 'ID', $user_id );
 	}
 
-	public function test_successful_password_claim_clears_unclaimed_marker(): void {
+	public function test_successful_custom_password_claim_runs_completion_in_order(): void {
 		$user = $this->create_user();
 		$key  = get_password_reset_key( $user );
+		$order = array();
+		$before_reset = static function ( $reset_user ) use ( &$order ): void {
+			$order[] = 'password_reset:' . get_user_meta( $reset_user->ID, 'ec_unclaimed', true );
+		};
+		$after_reset  = static function ( $reset_user ) use ( &$order ): void {
+			$order[] = 'after_password_reset:' . get_user_meta( $reset_user->ID, 'ec_unclaimed', true );
+		};
+		add_action( 'password_reset', $before_reset );
+		add_action( 'after_password_reset', $after_reset, 20 );
 
 		$this->assertNotWPError( $key );
 
-		$verified_user = check_password_reset_key( $key, $user->user_login );
-		$this->assertNotWPError( $verified_user );
+		try {
+			$result = ec_process_reset_password_submission( $key, $user->user_login, 'new-secure-password', 'new-secure-password' );
+		} finally {
+			remove_action( 'password_reset', $before_reset );
+			remove_action( 'after_password_reset', $after_reset, 20 );
+		}
 
-		reset_password( $verified_user, 'new-secure-password' );
-
+		$this->assertInstanceOf( WP_User::class, $result );
+		$this->assertSame( array( 'password_reset:1', 'after_password_reset:' ), $order );
 		$this->assertSame( '', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
 		$this->assertTrue( wp_check_password( 'new-secure-password', get_userdata( $user->ID )->user_pass, $user->ID ) );
 	}
 
-	public function test_invalid_or_expired_key_does_not_clear_unclaimed_marker(): void {
+	public function test_invalid_custom_reset_key_does_not_clear_unclaimed_marker(): void {
+		$user = $this->create_user();
+		$result = ec_process_reset_password_submission( 'invalid-key', $user->user_login, 'new-secure-password', 'new-secure-password' );
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'invalid_reset_key', $result->get_error_code() );
+		$this->assertSame( '1', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
+		$this->assertTrue( wp_check_password( 'original-password', get_userdata( $user->ID )->user_pass, $user->ID ) );
+	}
+
+	public function test_custom_password_mismatch_does_not_clear_unclaimed_marker(): void {
 		$user = $this->create_user();
 		$key  = get_password_reset_key( $user );
 
 		$this->assertNotWPError( $key );
-		wp_set_password( 'replacement-password', $user->ID );
+		$result = ec_process_reset_password_submission( $key, $user->user_login, 'new-secure-password', 'different-password' );
 
-		$this->assertWPError( check_password_reset_key( $key, $user->user_login ) );
+		$this->assertWPError( $result );
+		$this->assertSame( 'password_mismatch', $result->get_error_code() );
 		$this->assertSame( '1', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
+		$this->assertNotWPError( check_password_reset_key( $key, $user->user_login ) );
+		$this->assertTrue( wp_check_password( 'original-password', get_userdata( $user->ID )->user_pass, $user->ID ) );
 	}
 
-	public function test_failure_before_password_reset_does_not_clear_unclaimed_marker(): void {
+	public function test_custom_password_validation_failure_does_not_clear_unclaimed_marker(): void {
+		$user = $this->create_user();
+		$key  = get_password_reset_key( $user );
+
+		$this->assertNotWPError( $key );
+		$result = ec_process_reset_password_submission( $key, $user->user_login, 'short', 'short' );
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'password_too_short', $result->get_error_code() );
+		$this->assertSame( '1', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
+		$this->assertNotWPError( check_password_reset_key( $key, $user->user_login ) );
+		$this->assertTrue( wp_check_password( 'original-password', get_userdata( $user->ID )->user_pass, $user->ID ) );
+	}
+
+	public function test_core_password_reset_clears_unclaimed_marker(): void {
 		$user = $this->create_user();
 
-		do_action( 'password_reset', $user, 'new-secure-password' );
+		reset_password( $user, 'new-secure-password' );
 
-		$this->assertSame( '1', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
+		$this->assertSame( '', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
 	}
 
 	public function test_repeated_completion_hook_is_harmless(): void {
