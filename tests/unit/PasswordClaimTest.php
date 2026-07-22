@@ -89,6 +89,26 @@ class Test_Password_Claim extends WP_UnitTestCase {
 		$this->assertSame( '', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
 	}
 
+	public function test_core_reset_preserves_unclaimed_marker_when_deletion_fails(): void {
+		$user = $this->create_user();
+		$block_deletion = static function ( $check, $object_id, $meta_key ) use ( $user ) {
+			if ( $user->ID === (int) $object_id && 'ec_unclaimed' === $meta_key ) {
+				return false;
+			}
+			return $check;
+		};
+		add_filter( 'delete_user_metadata', $block_deletion, 10, 3 );
+
+		try {
+			reset_password( $user, 'new-secure-password' );
+		} finally {
+			remove_filter( 'delete_user_metadata', $block_deletion, 10 );
+		}
+
+		$this->assertSame( '1', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
+		$this->assertTrue( wp_check_password( 'new-secure-password', get_userdata( $user->ID )->user_pass, $user->ID ) );
+	}
+
 	public function test_completion_does_not_clear_marker_without_persisted_password(): void {
 		$user = $this->create_user();
 
