@@ -111,6 +111,20 @@ function ec_filter_new_user_notification_email( $email, $user, $blogname ) {
 add_filter( 'wp_new_user_notification_email', 'ec_filter_new_user_notification_email', 10, 3 );
 
 /**
+ * Mark an unclaimed account as claimed after its password reset completes.
+ *
+ * WordPress fires this hook only after reset_password() has persisted the new
+ * password. This covers both the Extra Chill reset handler and core reset
+ * flows without clearing the marker for invalid or failed attempts.
+ *
+ * @param WP_User $user User whose password was reset.
+ */
+function extrachill_users_clear_unclaimed_after_password_reset( $user ) {
+	delete_user_meta( $user->ID, 'ec_unclaimed' );
+}
+add_action( 'after_password_reset', 'extrachill_users_clear_unclaimed_after_password_reset' );
+
+/**
  * Get the transient key for password reset attempts.
  *
  * Keyed on requester IP only (not on submitted user_login) so attackers
