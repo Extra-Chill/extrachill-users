@@ -143,19 +143,23 @@ function extrachill_users_sanitize_utm( $raw ) {
  * @return bool Whether the user no longer exists.
  */
 function extrachill_users_rollback_created_user( $user_id ) {
+	if ( ! get_userdata( $user_id ) ) {
+		return true;
+	}
+
 	if ( is_multisite() ) {
 		if ( ! function_exists( 'wpmu_delete_user' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/ms.php';
 		}
-		$deleted = wpmu_delete_user( $user_id );
+		wpmu_delete_user( $user_id );
 	} else {
 		if ( ! function_exists( 'wp_delete_user' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/user.php';
 		}
-		$deleted = wp_delete_user( $user_id );
+		wp_delete_user( $user_id );
 	}
 
-	return $deleted && ! get_userdata( $user_id );
+	return ! get_userdata( $user_id );
 }
 
 /**
@@ -224,8 +228,8 @@ function extrachill_users_ability_create_user( $input ) {
 				'Unable to store the unclaimed account state. The created account was rolled back.',
 				array(
 					'status'         => 500,
-					'classification' => 'retry',
-					'retryable'      => true,
+					'classification' => 'rolled_back',
+					'retryable'      => false,
 				)
 			);
 		}

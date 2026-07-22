@@ -7,8 +7,11 @@ class Test_User_Creation extends WP_UnitTestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
-		if ( function_exists( 'extrachill_users_register_create_user_ability' ) ) {
-			extrachill_users_register_create_user_ability();
+		if ( ! wp_has_ability_category( 'extrachill-users' ) ) {
+			do_action( 'wp_abilities_api_categories_init' );
+		}
+		if ( ! wp_has_ability( 'extrachill/create-user' ) ) {
+			do_action( 'wp_abilities_api_init' );
 		}
 	}
 
@@ -209,11 +212,12 @@ class Test_User_Creation extends WP_UnitTestCase {
 
 		$this->assertWPError( $result );
 		$this->assertSame( 'unclaimed_state_persistence_failed', $result->get_error_code() );
-		$this->assertSame( 'retry', $result->get_error_data()['classification'] );
-		$this->assertTrue( $result->get_error_data()['retryable'] );
+		$this->assertSame( 'rolled_back', $result->get_error_data()['classification'] );
+		$this->assertFalse( $result->get_error_data()['retryable'] );
 		$this->assertGreaterThan( 0, $created_user_id );
 		$this->assertFalse( get_userdata( $created_user_id ) );
 		$this->assertFalse( username_exists( 'rollbackuser' ) );
+		$this->assertTrue( extrachill_users_rollback_created_user( $created_user_id ) );
 	}
 
 	public function test_unclaimed_marker_and_rollback_failure_requires_reconciliation(): void {

@@ -117,12 +117,24 @@ add_filter( 'wp_new_user_notification_email', 'ec_filter_new_user_notification_e
  * password. This covers both the Extra Chill reset handler and core reset
  * flows without clearing the marker for invalid or failed attempts.
  *
- * @param WP_User $user User whose password was reset.
+ * @param WP_User $user     User whose password was reset.
+ * @param string  $new_pass New password supplied to WordPress.
+ * @return bool Whether the password and claimed state are both persisted.
  */
-function extrachill_users_clear_unclaimed_after_password_reset( $user ) {
+function extrachill_users_clear_unclaimed_after_password_reset( $user, $new_pass ) {
+	$persisted_user = get_userdata( $user->ID );
+	if ( ! $persisted_user || ! wp_check_password( $new_pass, $persisted_user->user_pass, $user->ID ) ) {
+		return false;
+	}
+
+	if ( ! metadata_exists( 'user', $user->ID, 'ec_unclaimed' ) ) {
+		return true;
+	}
+
 	delete_user_meta( $user->ID, 'ec_unclaimed' );
+	return ! metadata_exists( 'user', $user->ID, 'ec_unclaimed' );
 }
-add_action( 'after_password_reset', 'extrachill_users_clear_unclaimed_after_password_reset' );
+add_action( 'after_password_reset', 'extrachill_users_clear_unclaimed_after_password_reset', 10, 2 );
 
 /**
  * Get the transient key for password reset attempts.
@@ -286,8 +298,17 @@ function ec_process_reset_password_submission( $key, $login, $pass1, $pass2 ) {
 	}
 
 	reset_password( $user, $pass1 );
+	$persisted_user = get_userdata( $user->ID );
 
-	return $user;
+	if ( ! $persisted_user || ! wp_check_password( $pass1, $persisted_user->user_pass, $user->ID ) ) {
+		return new WP_Error( 'password_update_failed', __( 'Unable to update your password. Please request a new reset link and try again.', 'extrachill-users' ) );
+	}
+
+	if ( metadata_exists( 'user', $user->ID, 'ec_unclaimed' ) ) {
+		return new WP_Error( 'unclaimed_state_clear_failed', __( 'Your password was updated, but the account claim could not be completed. Please request a new reset link and try again.', 'extrachill-users' ) );
+	}
+
+	return $persisted_user;
 }
 
 /**

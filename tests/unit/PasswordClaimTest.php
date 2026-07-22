@@ -89,9 +89,44 @@ class Test_Password_Claim extends WP_UnitTestCase {
 		$this->assertSame( '', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
 	}
 
+	public function test_completion_does_not_clear_marker_without_persisted_password(): void {
+		$user = $this->create_user();
+
+		$result = extrachill_users_clear_unclaimed_after_password_reset( $user, 'password-that-was-not-stored' );
+
+		$this->assertFalse( $result );
+		$this->assertSame( '1', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
+	}
+
+	public function test_custom_claim_reports_marker_deletion_failure(): void {
+		$user = $this->create_user();
+		$key  = get_password_reset_key( $user );
+		$block_deletion = static function ( $check, $object_id, $meta_key ) use ( $user ) {
+			if ( $user->ID === (int) $object_id && 'ec_unclaimed' === $meta_key ) {
+				return false;
+			}
+			return $check;
+		};
+		add_filter( 'delete_user_metadata', $block_deletion, 10, 3 );
+
+		$this->assertNotWPError( $key );
+
+		try {
+			$result = ec_process_reset_password_submission( $key, $user->user_login, 'new-secure-password', 'new-secure-password' );
+		} finally {
+			remove_filter( 'delete_user_metadata', $block_deletion, 10 );
+		}
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'unclaimed_state_clear_failed', $result->get_error_code() );
+		$this->assertSame( '1', get_user_meta( $user->ID, 'ec_unclaimed', true ) );
+		$this->assertTrue( wp_check_password( 'new-secure-password', get_userdata( $user->ID )->user_pass, $user->ID ) );
+	}
+
 	public function test_repeated_completion_hook_is_harmless(): void {
 		$user = $this->create_user();
 
+		reset_password( $user, 'new-secure-password' );
 		do_action( 'after_password_reset', $user, 'new-secure-password' );
 		do_action( 'after_password_reset', $user, 'new-secure-password' );
 
