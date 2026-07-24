@@ -10,6 +10,10 @@
 
 defined( 'ABSPATH' ) || exit;
 
+const EXTRACHILL_USERS_LOGIN_RATE_LIMIT  = 5;
+const EXTRACHILL_USERS_LOGIN_RATE_WINDOW = 15 * MINUTE_IN_SECONDS;
+const EXTRACHILL_USERS_LOGIN_CACHE_GROUP = 'extrachill-users-login-rate-limit';
+
 /**
  * Get the transient key for login attempts.
  *
@@ -17,11 +21,124 @@ defined( 'ABSPATH' ) || exit;
  * @return string Transient key.
  */
 function ec_get_login_attempt_key( $username ) {
-	$ip         = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+	$ip = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+	if ( '' === $ip ) {
+		return '';
+	}
+
 	$identifier = trim( (string) $username );
 	$user       = is_email( $identifier ) ? get_user_by( 'email', $identifier ) : get_user_by( 'login', $identifier );
 	$identity   = $user instanceof WP_User ? 'user:' . $user->ID : 'identifier:' . strtolower( $identifier );
 	return 'ec_login_attempts_' . md5( $ip . '|' . $identity );
+}
+
+/**
+ * Return a stable error when atomic login accounting is unavailable.
+ *
+ * @return WP_Error Storage error.
+ */
+function ec_login_limiter_unavailable_error() {
+	return new WP_Error(
+		'ec_login_limiter_unavailable',
+		__( 'Login is temporarily unavailable. Please try again.', 'extrachill-users' )
+	);
+}
+
+/**
+ * Run one login rate-limit storage operation.
+ *
+ * Production uses the persistent object cache. Tests may replace this callable
+ * through `extrachill_users_login_rate_limit_store` to control race ordering.
+ *
+ * @param string $operation Operation name: get, increment, or clear.
+ * @param string $key       Hashed requester and identity key.
+ * @return int|WP_Error Current attempt count, or an error on storage failure.
+ */
+function ec_login_rate_limit_cache_operation( $operation, $key ) {
+	if ( ! function_exists( 'wp_using_ext_object_cache' )
+		|| ! wp_using_ext_object_cache()
+		|| ! function_exists( 'wp_cache_add' )
+		|| ! function_exists( 'wp_cache_incr' )
+	) {
+		return ec_login_limiter_unavailable_error();
+	}
+
+	$generation_key = $key . '_generation';
+	$found          = false;
+	$generation     = wp_cache_get( $generation_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
+	if ( ! $found ) {
+		if ( ! wp_cache_add( $generation_key, 0, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) ) {
+			$generation = wp_cache_get( $generation_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
+		} else {
+			$generation = 0;
+			$found      = true;
+		}
+	}
+
+	if ( ! $found || ! is_numeric( $generation ) ) {
+		return ec_login_limiter_unavailable_error();
+	}
+
+	if ( 'clear' === $operation ) {
+		$generation = wp_cache_incr( $generation_key, 1, EXTRACHILL_USERS_LOGIN_CACHE_GROUP );
+		return false === $generation || ! is_numeric( $generation )
+			? ec_login_limiter_unavailable_error()
+			: 0;
+	}
+
+	$counter_key = $key . '_generation_' . (int) $generation;
+	if ( 'get' === $operation ) {
+		$count = wp_cache_get( $counter_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
+		if ( $found ) {
+			return is_numeric( $count ) ? (int) $count : ec_login_limiter_unavailable_error();
+		}
+
+		if ( wp_cache_add( $counter_key, 0, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) ) {
+			return 0;
+		}
+
+		$count = wp_cache_get( $counter_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
+		return $found && is_numeric( $count ) ? (int) $count : ec_login_limiter_unavailable_error();
+	}
+
+	if ( 'increment' !== $operation ) {
+		return ec_login_limiter_unavailable_error();
+	}
+
+	if ( wp_cache_add( $counter_key, 1, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) ) {
+		return 1;
+	}
+
+	$count = wp_cache_incr( $counter_key, 1, EXTRACHILL_USERS_LOGIN_CACHE_GROUP );
+	return false === $count || ! is_numeric( $count ) ? ec_login_limiter_unavailable_error() : (int) $count;
+}
+
+/**
+ * Use the configured login rate-limit store.
+ *
+ * @param string $operation Operation name.
+ * @param string $key       Hashed limiter key.
+ * @return int|WP_Error Current attempt count, or an error on storage failure.
+ */
+function ec_login_rate_limit_store( $operation, $key ) {
+	if ( '' === $key ) {
+		return ec_login_limiter_unavailable_error();
+	}
+
+	/**
+	 * Filter the atomic login rate-limit storage callable.
+	 *
+	 * @param callable $store Storage callable accepting operation and key.
+	 */
+	$store = apply_filters( 'extrachill_users_login_rate_limit_store', 'ec_login_rate_limit_cache_operation' );
+	if ( ! is_callable( $store ) ) {
+		return ec_login_limiter_unavailable_error();
+	}
+
+	$result = call_user_func( $store, $operation, $key );
+	return is_wp_error( $result ) || is_numeric( $result )
+		? $result
+		: ec_login_limiter_unavailable_error();
 }
 
 /**
@@ -34,36 +151,37 @@ function ec_is_login_blocked( $username ) {
 	if ( empty( $username ) ) {
 		return false;
 	}
-	$key      = ec_get_login_attempt_key( $username );
-	$attempts = get_transient( $key );
-	return $attempts && $attempts >= 5;
+
+	$attempts = ec_login_rate_limit_store( 'get', ec_get_login_attempt_key( $username ) );
+	return is_wp_error( $attempts ) || $attempts >= EXTRACHILL_USERS_LOGIN_RATE_LIMIT;
 }
 
 /**
  * Record a failed login attempt.
  *
  * @param string $username Username that failed.
+ * @return int|WP_Error Current attempt count, or an error on storage failure.
  */
 function ec_record_failed_login( $username ) {
 	if ( empty( $username ) ) {
-		return;
+		return ec_login_limiter_unavailable_error();
 	}
-	$key      = ec_get_login_attempt_key( $username );
-	$attempts = get_transient( $key );
-	$attempts = $attempts ? $attempts + 1 : 1;
-	set_transient( $key, $attempts, 15 * MINUTE_IN_SECONDS );
+
+	return ec_login_rate_limit_store( 'increment', ec_get_login_attempt_key( $username ) );
 }
 
 /**
  * Clear login attempts after successful login.
  *
  * @param string $username Username that succeeded.
+ * @return int|WP_Error Zero on success, or an error on storage failure.
  */
 function ec_clear_login_attempts( $username ) {
 	if ( empty( $username ) ) {
-		return;
+		return ec_login_limiter_unavailable_error();
 	}
-	delete_transient( ec_get_login_attempt_key( $username ) );
+
+	return ec_login_rate_limit_store( 'clear', ec_get_login_attempt_key( $username ) );
 }
 
 /**
@@ -78,7 +196,19 @@ function ec_rate_limit_login( $user, $username ) {
 		return $user;
 	}
 
-	if ( ec_is_login_blocked( $username ) ) {
+	if ( is_wp_error( $user ) ) {
+		$attempts = ec_record_failed_login( $username );
+		if ( is_wp_error( $attempts ) ) {
+			return $attempts;
+		}
+	} else {
+		$attempts = ec_login_rate_limit_store( 'get', ec_get_login_attempt_key( $username ) );
+		if ( is_wp_error( $attempts ) ) {
+			return $attempts;
+		}
+	}
+
+	if ( $attempts > EXTRACHILL_USERS_LOGIN_RATE_LIMIT || ( ! is_wp_error( $user ) && $attempts >= EXTRACHILL_USERS_LOGIN_RATE_LIMIT ) ) {
 		return new WP_Error(
 			'ec_login_blocked',
 			__( 'Too many failed login attempts. Please try again in 15 minutes.', 'extrachill-users' )
@@ -123,7 +253,6 @@ add_action( 'two_factor_user_authenticated', 'ec_clear_attempts_on_two_factor' )
  * @param string $username Username attempted
  */
 function extrachill_handle_login_failed( $username ) {
-	ec_record_failed_login( $username );
 	if ( defined( 'REST_REQUEST' ) && REST_REQUEST ) {
 		return;
 	}
