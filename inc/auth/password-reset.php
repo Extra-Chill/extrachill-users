@@ -172,11 +172,12 @@ function ec_password_reset_limiter_unavailable_error() {
 /**
  * Run one password-reset rate-limit storage operation.
  *
- * @param string $operation Operation name: get or increment.
- * @param string $key       Hashed requester key.
+ * @param string   $operation Operation name: get or increment.
+ * @param string   $key       Hashed requester key.
+ * @param int|null $now       Optional Unix timestamp for deterministic tests.
  * @return int|WP_Error Current attempt count, or an error on storage failure.
  */
-function ec_password_reset_rate_limit_cache_operation( $operation, $key ) {
+function ec_password_reset_rate_limit_cache_operation( $operation, $key, $now = null ) {
 	if ( ! function_exists( 'wp_using_ext_object_cache' )
 		|| ! wp_using_ext_object_cache()
 		|| ! function_exists( 'wp_cache_add' )
@@ -185,14 +186,17 @@ function ec_password_reset_rate_limit_cache_operation( $operation, $key ) {
 		return ec_password_reset_limiter_unavailable_error();
 	}
 
-	$found = false;
+	$now         = null === $now ? time() : (int) $now;
+	$key        .= '_window_' . intdiv( $now, EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW );
+	$storage_ttl = 2 * EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW;
+	$found       = false;
 	if ( 'get' === $operation ) {
 		$count = wp_cache_get( $key, EXTRACHILL_USERS_PASSWORD_RESET_CACHE_GROUP, true, $found );
 		if ( $found ) {
 			return is_numeric( $count ) ? (int) $count : ec_password_reset_limiter_unavailable_error();
 		}
 
-		if ( wp_cache_add( $key, 0, EXTRACHILL_USERS_PASSWORD_RESET_CACHE_GROUP, EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW ) ) {
+		if ( wp_cache_add( $key, 0, EXTRACHILL_USERS_PASSWORD_RESET_CACHE_GROUP, $storage_ttl ) ) {
 			return 0;
 		}
 
@@ -204,7 +208,7 @@ function ec_password_reset_rate_limit_cache_operation( $operation, $key ) {
 		return ec_password_reset_limiter_unavailable_error();
 	}
 
-	if ( wp_cache_add( $key, 1, EXTRACHILL_USERS_PASSWORD_RESET_CACHE_GROUP, EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW ) ) {
+	if ( wp_cache_add( $key, 1, EXTRACHILL_USERS_PASSWORD_RESET_CACHE_GROUP, $storage_ttl ) ) {
 		return 1;
 	}
 
@@ -237,7 +241,7 @@ function ec_password_reset_rate_limit_store( $operation, $key ) {
 		return ec_password_reset_limiter_unavailable_error();
 	}
 
-	$result = call_user_func( $store, $operation, $key );
+	$result = call_user_func( $store, $operation, $key, null );
 	return is_wp_error( $result ) || is_numeric( $result )
 		? $result
 		: ec_password_reset_limiter_unavailable_error();

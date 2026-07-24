@@ -126,6 +126,17 @@ class Auth_Rate_Limit_Test_Cache {
 		// Authentication groups intentionally remain blog-scoped.
 	}
 
+	public function ttl( $key, $group ): int {
+		$found = false;
+		$this->get( $key, $group, false, $found );
+		if ( ! $found ) {
+			return -2;
+		}
+
+		$expires_at = $this->data[ $this->id( $key, $group ) ]['expires_at'];
+		return 0 === $expires_at ? -1 : $expires_at - $this->now;
+	}
+
 	private function id( $key, $group ): string {
 		return $this->blog_id . ':' . $group . ':' . $key;
 	}
@@ -152,6 +163,23 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 		$this->cache                = new Auth_Rate_Limit_Test_Cache();
 		$GLOBALS['wp_object_cache'] = $this->cache;
 		wp_using_ext_object_cache( true );
+
+		add_filter(
+			'extrachill_users_login_rate_limit_store',
+			function () {
+				return function ( $operation, $key ) {
+					return ec_login_rate_limit_cache_operation( $operation, $key, $this->cache->now );
+				};
+			}
+		);
+		add_filter(
+			'extrachill_users_password_reset_rate_limit_store',
+			function () {
+				return function ( $operation, $key ) {
+					return ec_password_reset_rate_limit_cache_operation( $operation, $key, $this->cache->now );
+				};
+			}
+		);
 	}
 
 	protected function tearDown(): void {
@@ -165,7 +193,7 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 
 	public function test_login_barrier_records_every_concurrent_failure(): void {
 		$key                           = ec_get_login_attempt_key( 'person@example.com' );
-		$this->cache->after_add_pattern = '_generation_';
+		$this->cache->after_add_pattern = '_total';
 		$this->cache->after_add         = static function (): void {
 			for ( $attempt = 0; $attempt < 5; ++$attempt ) {
 				ec_record_failed_login( 'person@example.com' );
@@ -204,9 +232,9 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 		$this->assertSame( 'ec_login_blocked', $result->get_error_code() );
 	}
 
-	public function test_successful_login_clear_does_not_erase_newer_failure(): void {
+	public function test_failure_before_clear_is_cleared_and_failure_after_clear_survives(): void {
 		ec_record_failed_login( 'person@example.com' );
-		$this->cache->after_set_pattern = '_generation';
+		$this->cache->after_set_pattern = '_cleared';
 		$this->cache->after_set         = static function (): void {
 			ec_record_failed_login( 'person@example.com' );
 		};
@@ -215,15 +243,42 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 		$this->assertSame( 1, ec_login_rate_limit_store( 'get', ec_get_login_attempt_key( 'person@example.com' ) ) );
 	}
 
-	public function test_clear_near_generation_expiry_keeps_new_failures_visible(): void {
+	public function test_login_total_and_marker_share_bounded_fixed_window_lifetime(): void {
 		ec_record_failed_login( 'person@example.com' );
-		$this->cache->now += ( 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) - 1;
-
 		$this->assertSame( 0, ec_clear_login_attempts( 'person@example.com' ) );
+
+		$window_key = ec_get_login_attempt_key( 'person@example.com' ) . '_window_' . intdiv( $this->cache->now, EXTRACHILL_USERS_LOGIN_RATE_WINDOW );
+		$this->assertSame( 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW, $this->cache->ttl( $window_key . '_total', EXTRACHILL_USERS_LOGIN_CACHE_GROUP ) );
+		$this->assertSame( 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW, $this->cache->ttl( $window_key . '_cleared', EXTRACHILL_USERS_LOGIN_CACHE_GROUP ) );
+		$this->assertSame( -2, $this->cache->ttl( ec_get_login_attempt_key( 'person@example.com' ) . '_generation', EXTRACHILL_USERS_LOGIN_CACHE_GROUP ) );
+	}
+
+	public function test_login_add_loser_cannot_create_ttl_less_key_at_boundary(): void {
+		$window_end = ( intdiv( $this->cache->now, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) + 1 ) * EXTRACHILL_USERS_LOGIN_RATE_WINDOW;
+		$this->cache->now               = $window_end - 1;
+		$this->cache->after_add_pattern = '_total';
+		$this->cache->after_add         = static function (): void {
+			ec_record_failed_login( 'person@example.com' );
+		};
+
 		ec_record_failed_login( 'person@example.com' );
+		$old_total_key = ec_get_login_attempt_key( 'person@example.com' ) . '_window_' . intdiv( $this->cache->now, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) . '_total';
 		$this->cache->now += 2;
 
+		$this->assertSame( ( 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) - 2, $this->cache->ttl( $old_total_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP ) );
+		$this->assertSame( 0, ec_login_rate_limit_store( 'get', ec_get_login_attempt_key( 'person@example.com' ) ) );
+	}
+
+	public function test_login_fixed_window_rollover_ignores_stale_clear_marker(): void {
+		ec_record_failed_login( 'person@example.com' );
+		ec_record_failed_login( 'person@example.com' );
+		ec_clear_login_attempts( 'person@example.com' );
+		ec_record_failed_login( 'person@example.com' );
 		$this->assertSame( 1, ec_login_rate_limit_store( 'get', ec_get_login_attempt_key( 'person@example.com' ) ) );
+
+		$this->cache->now = ( intdiv( $this->cache->now, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) + 1 ) * EXTRACHILL_USERS_LOGIN_RATE_WINDOW;
+		$this->assertSame( 0, ec_login_rate_limit_store( 'get', ec_get_login_attempt_key( 'person@example.com' ) ) );
+		$this->assertSame( 1, ec_record_failed_login( 'person@example.com' ) );
 	}
 
 	public function test_login_counter_expires_after_original_window(): void {
@@ -255,6 +310,22 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 
 		$this->assertSame( 1, ec_record_password_reset_attempt() );
 		$this->assertSame( 6, ec_password_reset_rate_limit_store( 'get', ec_get_password_reset_attempt_key() ) );
+	}
+
+	public function test_password_reset_add_loser_cannot_create_ttl_less_key_at_boundary(): void {
+		$window_end = ( intdiv( $this->cache->now, EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW ) + 1 ) * EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW;
+		$this->cache->now               = $window_end - 1;
+		$this->cache->after_add_pattern = 'ec_password_reset_attempts_';
+		$this->cache->after_add         = static function (): void {
+			ec_record_password_reset_attempt();
+		};
+
+		ec_record_password_reset_attempt();
+		$old_key = ec_get_password_reset_attempt_key() . '_window_' . intdiv( $this->cache->now, EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW );
+		$this->cache->now += 2;
+
+		$this->assertSame( ( 2 * EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW ) - 2, $this->cache->ttl( $old_key, EXTRACHILL_USERS_PASSWORD_RESET_CACHE_GROUP ) );
+		$this->assertSame( 0, ec_password_reset_rate_limit_store( 'get', ec_get_password_reset_attempt_key() ) );
 	}
 
 	public function test_password_reset_fifth_and_sixth_boundary_is_exact(): void {

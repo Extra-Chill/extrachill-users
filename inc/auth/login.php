@@ -50,11 +50,12 @@ function ec_login_limiter_unavailable_error() {
  * Production uses the persistent object cache. Tests may replace this callable
  * through `extrachill_users_login_rate_limit_store` to control race ordering.
  *
- * @param string $operation Operation name: get, increment, or clear.
- * @param string $key       Hashed requester and identity key.
- * @return int|WP_Error Current attempt count, or an error on storage failure.
+ * @param string   $operation Operation name: get, increment, or clear.
+ * @param string   $key       Hashed requester and identity key.
+ * @param int|null $now       Optional Unix timestamp for deterministic tests.
+ * @return int|WP_Error Effective attempt count, or an error on storage failure.
  */
-function ec_login_rate_limit_cache_operation( $operation, $key ) {
+function ec_login_rate_limit_cache_operation( $operation, $key, $now = null ) {
 	if ( ! function_exists( 'wp_using_ext_object_cache' )
 		|| ! wp_using_ext_object_cache()
 		|| ! function_exists( 'wp_cache_add' )
@@ -64,56 +65,61 @@ function ec_login_rate_limit_cache_operation( $operation, $key ) {
 		return ec_login_limiter_unavailable_error();
 	}
 
-	$generation_key = $key . '_generation';
-	$found          = false;
-	$generation     = wp_cache_get( $generation_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
-	if ( ! $found ) {
-		$generation = wp_generate_uuid4();
-		if ( ! wp_cache_add( $generation_key, $generation, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) ) {
-			$generation = wp_cache_get( $generation_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
-		} else {
-			$found = true;
-		}
-	}
-
-	if ( ! $found || ! is_string( $generation ) || '' === $generation ) {
-		return ec_login_limiter_unavailable_error();
-	}
-
-	if ( 'clear' === $operation ) {
-		// Replacing the token linearizes concurrent clears and refreshes its
-		// bounded TTL beyond every counter that can reference it.
-		$generation = wp_generate_uuid4();
-		return wp_cache_set( $generation_key, $generation, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW )
-			? 0
-			: ec_login_limiter_unavailable_error();
-	}
-
-	$counter_key = $key . '_generation_' . $generation;
-	if ( 'get' === $operation ) {
+	$now          = null === $now ? time() : (int) $now;
+	$window_key   = $key . '_window_' . intdiv( $now, EXTRACHILL_USERS_LOGIN_RATE_WINDOW );
+	$total_key    = $window_key . '_total';
+	$cleared_key  = $window_key . '_cleared';
+	$storage_ttl  = 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW;
+	$read_counter = static function ( $counter_key ) use ( $storage_ttl ) {
+		$found = false;
 		$count = wp_cache_get( $counter_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
 		if ( $found ) {
 			return is_numeric( $count ) ? (int) $count : ec_login_limiter_unavailable_error();
 		}
 
-		if ( wp_cache_add( $counter_key, 0, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) ) {
+		if ( wp_cache_add( $counter_key, 0, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, $storage_ttl ) ) {
 			return 0;
 		}
 
 		$count = wp_cache_get( $counter_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
 		return $found && is_numeric( $count ) ? (int) $count : ec_login_limiter_unavailable_error();
+	};
+
+	if ( 'clear' === $operation ) {
+		$total = $read_counter( $total_key );
+		if ( is_wp_error( $total ) ) {
+			return $total;
+		}
+
+		// A failure before this read is cleared; an increment after it remains
+		// above the marker. Concurrent marker regression can only overcount.
+		return wp_cache_set( $cleared_key, $total, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, $storage_ttl )
+			? 0
+			: ec_login_limiter_unavailable_error();
 	}
 
-	if ( 'increment' !== $operation ) {
+	if ( 'get' !== $operation && 'increment' !== $operation ) {
 		return ec_login_limiter_unavailable_error();
 	}
 
-	if ( wp_cache_add( $counter_key, 1, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) ) {
-		return 1;
+	if ( 'increment' === $operation ) {
+		if ( wp_cache_add( $total_key, 1, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, $storage_ttl ) ) {
+			$total = 1;
+		} else {
+			$total = wp_cache_incr( $total_key, 1, EXTRACHILL_USERS_LOGIN_CACHE_GROUP );
+			if ( false === $total || ! is_numeric( $total ) ) {
+				return ec_login_limiter_unavailable_error();
+			}
+		}
+	} else {
+		$total = $read_counter( $total_key );
+		if ( is_wp_error( $total ) ) {
+			return $total;
+		}
 	}
 
-	$count = wp_cache_incr( $counter_key, 1, EXTRACHILL_USERS_LOGIN_CACHE_GROUP );
-	return false === $count || ! is_numeric( $count ) ? ec_login_limiter_unavailable_error() : (int) $count;
+	$cleared = $read_counter( $cleared_key );
+	return is_wp_error( $cleared ) ? $cleared : max( 0, (int) $total - $cleared );
 }
 
 /**
@@ -138,7 +144,7 @@ function ec_login_rate_limit_store( $operation, $key ) {
 		return ec_login_limiter_unavailable_error();
 	}
 
-	$result = call_user_func( $store, $operation, $key );
+	$result = call_user_func( $store, $operation, $key, null );
 	return is_wp_error( $result ) || is_numeric( $result )
 		? $result
 		: ec_login_limiter_unavailable_error();
