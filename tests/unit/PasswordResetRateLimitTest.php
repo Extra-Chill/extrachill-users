@@ -25,10 +25,10 @@ class Auth_Rate_Limit_Test_Cache {
 	public $after_add_pattern = '';
 
 	/** @var callable|null */
-	public $after_incr;
+	public $after_set;
 
 	/** @var string */
-	public $after_incr_pattern = '';
+	public $after_set_pattern = '';
 
 	public function add( $key, $value, $group = 'default', $expiration = 0 ): bool {
 		if ( $this->fail ) {
@@ -60,6 +60,12 @@ class Auth_Rate_Limit_Test_Cache {
 			'value'      => $value,
 			'expires_at' => $expiration ? $this->now + (int) $expiration : 0,
 		);
+		if ( is_callable( $this->after_set ) && false !== strpos( (string) $key, $this->after_set_pattern ) ) {
+			$callback        = $this->after_set;
+			$this->after_set = null;
+			$callback();
+		}
+
 		return true;
 	}
 
@@ -99,12 +105,6 @@ class Auth_Rate_Limit_Test_Cache {
 
 		$id                         = $this->id( $key, $group );
 		$this->data[ $id ]['value'] = (int) $value + (int) $offset;
-		if ( is_callable( $this->after_incr ) && false !== strpos( (string) $key, $this->after_incr_pattern ) ) {
-			$callback         = $this->after_incr;
-			$this->after_incr = null;
-			$callback();
-		}
-
 		return $this->data[ $id ]['value'];
 	}
 
@@ -165,7 +165,7 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 
 	public function test_login_barrier_records_every_concurrent_failure(): void {
 		$key                           = ec_get_login_attempt_key( 'person@example.com' );
-		$this->cache->after_add_pattern = '_generation_0';
+		$this->cache->after_add_pattern = '_generation_';
 		$this->cache->after_add         = static function (): void {
 			for ( $attempt = 0; $attempt < 5; ++$attempt ) {
 				ec_record_failed_login( 'person@example.com' );
@@ -206,12 +206,23 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 
 	public function test_successful_login_clear_does_not_erase_newer_failure(): void {
 		ec_record_failed_login( 'person@example.com' );
-		$this->cache->after_incr_pattern = '_generation';
-		$this->cache->after_incr         = static function (): void {
+		$this->cache->after_set_pattern = '_generation';
+		$this->cache->after_set         = static function (): void {
 			ec_record_failed_login( 'person@example.com' );
 		};
 
 		$this->assertSame( 0, ec_clear_login_attempts( 'person@example.com' ) );
+		$this->assertSame( 1, ec_login_rate_limit_store( 'get', ec_get_login_attempt_key( 'person@example.com' ) ) );
+	}
+
+	public function test_clear_near_generation_expiry_keeps_new_failures_visible(): void {
+		ec_record_failed_login( 'person@example.com' );
+		$this->cache->now += ( 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) - 1;
+
+		$this->assertSame( 0, ec_clear_login_attempts( 'person@example.com' ) );
+		ec_record_failed_login( 'person@example.com' );
+		$this->cache->now += 2;
+
 		$this->assertSame( 1, ec_login_rate_limit_store( 'get', ec_get_login_attempt_key( 'person@example.com' ) ) );
 	}
 

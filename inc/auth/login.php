@@ -59,6 +59,7 @@ function ec_login_rate_limit_cache_operation( $operation, $key ) {
 		|| ! wp_using_ext_object_cache()
 		|| ! function_exists( 'wp_cache_add' )
 		|| ! function_exists( 'wp_cache_incr' )
+		|| ! function_exists( 'wp_cache_set' )
 	) {
 		return ec_login_limiter_unavailable_error();
 	}
@@ -67,26 +68,28 @@ function ec_login_rate_limit_cache_operation( $operation, $key ) {
 	$found          = false;
 	$generation     = wp_cache_get( $generation_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
 	if ( ! $found ) {
-		if ( ! wp_cache_add( $generation_key, 0, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) ) {
+		$generation = wp_generate_uuid4();
+		if ( ! wp_cache_add( $generation_key, $generation, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) ) {
 			$generation = wp_cache_get( $generation_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
 		} else {
-			$generation = 0;
-			$found      = true;
+			$found = true;
 		}
 	}
 
-	if ( ! $found || ! is_numeric( $generation ) ) {
+	if ( ! $found || ! is_string( $generation ) || '' === $generation ) {
 		return ec_login_limiter_unavailable_error();
 	}
 
 	if ( 'clear' === $operation ) {
-		$generation = wp_cache_incr( $generation_key, 1, EXTRACHILL_USERS_LOGIN_CACHE_GROUP );
-		return false === $generation || ! is_numeric( $generation )
-			? ec_login_limiter_unavailable_error()
-			: 0;
+		// Replacing the token linearizes concurrent clears and refreshes its
+		// bounded TTL beyond every counter that can reference it.
+		$generation = wp_generate_uuid4();
+		return wp_cache_set( $generation_key, $generation, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW )
+			? 0
+			: ec_login_limiter_unavailable_error();
 	}
 
-	$counter_key = $key . '_generation_' . (int) $generation;
+	$counter_key = $key . '_generation_' . $generation;
 	if ( 'get' === $operation ) {
 		$count = wp_cache_get( $counter_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP, true, $found );
 		if ( $found ) {
