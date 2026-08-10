@@ -10,6 +10,21 @@ defined( 'ABSPATH' ) || exit;
 require_once __DIR__ . '/db.php';
 
 /**
+ * Create a subscription error with REST response data.
+ *
+ * @param string $code Error code.
+ * @param string $message Error message.
+ * @param int    $status HTTP status.
+ * @return WP_Error
+ */
+function extrachill_users_entity_subscription_error( $code, $message, $status ) {
+	$arguments    = func_get_args();
+	$arguments[2] = array( 'status' => $status );
+
+	return new WP_Error( ...$arguments );
+}
+
+/**
  * Ensure the network table exists after upgrades.
  *
  * @return void
@@ -49,7 +64,7 @@ function extrachill_users_normalize_entity_subscription( $entity_type, $taxonomy
 	$expected_taxonomy = is_array( $definition ) ? sanitize_key( $definition['taxonomy'] ?? '' ) : sanitize_key( $definition );
 
 	if ( '' === $entity_type || '' === $taxonomy || '' === $slug || '' === $expected_taxonomy || $taxonomy !== $expected_taxonomy ) {
-		return new WP_Error( 'invalid_entity_subscription', __( 'A supported entity type, taxonomy, and slug are required.', 'extrachill-users' ), array( 'status' => 400 ) );
+		return extrachill_users_entity_subscription_error( 'invalid_entity_subscription', __( 'A supported entity type, taxonomy, and slug are required.', 'extrachill-users' ), 400 );
 	}
 
 	return array(
@@ -98,7 +113,7 @@ function extrachill_users_subscribe_to_entity( $user_id, $entity_type, $taxonomy
 		return $entity;
 	}
 	if ( ! $user_id || ! get_userdata( $user_id ) ) {
-		return new WP_Error( 'user_not_found', __( 'User not found.', 'extrachill-users' ), array( 'status' => 404 ) );
+		return extrachill_users_entity_subscription_error( 'user_not_found', __( 'User not found.', 'extrachill-users' ), 404 );
 	}
 
 	$table    = extrachill_users_entity_subscriptions_table_name();
@@ -113,7 +128,7 @@ function extrachill_users_subscribe_to_entity( $user_id, $entity_type, $taxonomy
 		)
 	);
 	if ( false === $inserted ) {
-		return new WP_Error( 'entity_subscription_insert_failed', __( 'The subscription could not be saved.', 'extrachill-users' ), array( 'status' => 500 ) );
+		return extrachill_users_entity_subscription_error( 'entity_subscription_insert_failed', __( 'The subscription could not be saved.', 'extrachill-users' ), 500 );
 	}
 
 	return array_merge( $entity, array( 'subscribed' => true ) );
@@ -138,7 +153,7 @@ function extrachill_users_unsubscribe_from_entity( $user_id, $entity_type, $taxo
 		return $entity;
 	}
 	if ( ! $user_id || ! get_userdata( $user_id ) ) {
-		return new WP_Error( 'user_not_found', __( 'User not found.', 'extrachill-users' ), array( 'status' => 404 ) );
+		return extrachill_users_entity_subscription_error( 'user_not_found', __( 'User not found.', 'extrachill-users' ), 404 );
 	}
 
 	$table   = extrachill_users_entity_subscriptions_table_name();
@@ -152,7 +167,7 @@ function extrachill_users_unsubscribe_from_entity( $user_id, $entity_type, $taxo
 		)
 	);
 	if ( false === $deleted ) {
-		return new WP_Error( 'entity_subscription_delete_failed', __( 'The subscription could not be removed.', 'extrachill-users' ), array( 'status' => 500 ) );
+		return extrachill_users_entity_subscription_error( 'entity_subscription_delete_failed', __( 'The subscription could not be removed.', 'extrachill-users' ), 500 );
 	}
 
 	return array_merge( $entity, array( 'subscribed' => false ) );
@@ -206,7 +221,7 @@ function extrachill_users_list_entity_subscriptions( $user_id, $page = 1, $per_p
 	$page     = max( 1, absint( $page ) );
 	$per_page = max( 1, min( 100, absint( $per_page ) ) );
 	if ( ! $user_id || ! get_userdata( $user_id ) ) {
-		return new WP_Error( 'user_not_found', __( 'User not found.', 'extrachill-users' ), array( 'status' => 404 ) );
+		return extrachill_users_entity_subscription_error( 'user_not_found', __( 'User not found.', 'extrachill-users' ), 404 );
 	}
 
 	$table  = extrachill_users_entity_subscriptions_table_name();
@@ -221,7 +236,7 @@ function extrachill_users_list_entity_subscriptions( $user_id, $page = 1, $per_p
 		ARRAY_A
 	);
 	if ( ! is_array( $rows ) ) {
-		return new WP_Error( 'entity_subscriptions_read_failed', __( 'The subscriptions could not be loaded.', 'extrachill-users' ), array( 'status' => 500 ) );
+		return extrachill_users_entity_subscription_error( 'entity_subscriptions_read_failed', __( 'The subscriptions could not be loaded.', 'extrachill-users' ), 500 );
 	}
 	$total = (int) $wpdb->get_var(
 		$wpdb->prepare(
@@ -272,10 +287,10 @@ function extrachill_users_entity_subscription_recipients( $producer, $entity_typ
 		return $entity;
 	}
 	if ( '' === $producer || ! apply_filters( 'extrachill_users_entity_subscription_producer_authorized', false, $producer, $entity, $delivery ) ) {
-		return new WP_Error( 'entity_subscription_producer_forbidden', __( 'This producer is not authorized to resolve entity subscription recipients.', 'extrachill-users' ), array( 'status' => 403 ) );
+		return extrachill_users_entity_subscription_error( 'entity_subscription_producer_forbidden', __( 'This producer is not authorized to resolve entity subscription recipients.', 'extrachill-users' ), 403 );
 	}
 	if ( ! in_array( $delivery, array( 'notification', 'email' ), true ) ) {
-		return new WP_Error( 'invalid_entity_subscription_delivery', __( 'Unsupported notification delivery.', 'extrachill-users' ), array( 'status' => 400 ) );
+		return extrachill_users_entity_subscription_error( 'invalid_entity_subscription_delivery', __( 'Unsupported notification delivery.', 'extrachill-users' ), 400 );
 	}
 
 	$table = extrachill_users_entity_subscriptions_table_name();
