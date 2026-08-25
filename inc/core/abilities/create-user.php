@@ -11,7 +11,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_create_user_ability' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_create_user_ability' );
 
 /**
  * Register the create-user ability.

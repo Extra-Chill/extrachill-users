@@ -7,7 +7,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_user_administration_abilities' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_user_administration_abilities' );
 
 /**
  * Register abilities formerly supplied by the Admin Tools umbrella.
