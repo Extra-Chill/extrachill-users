@@ -13,7 +13,7 @@ declare(strict_types=1);
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_leaderboard_ability' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_leaderboard_ability' );
 
 /**
  * Register the extrachill/users-leaderboard ability.

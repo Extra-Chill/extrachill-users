@@ -11,7 +11,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_create_user_ability' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_create_user_ability' );
 
 /**
  * Register the create-user ability.
@@ -296,7 +296,9 @@ function extrachill_users_ability_create_user( $input ) {
 		do_action( 'extrachill_new_user_registered', $user_id, $registration_page, $registration_source, $registration_method );
 
 		// Track analytics via ability if available.
-		$analytics_ability = wp_get_ability( 'extrachill/track-analytics-event' );
+		$analytics_ability = wp_has_ability( 'extrachill/track-analytics-event' )
+			? wp_get_ability( 'extrachill/track-analytics-event' )
+			: null;
 		if ( $analytics_ability ) {
 			$event_data = array(
 				'user_id' => $user_id,

@@ -11,7 +11,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_concert_tracking_abilities' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_concert_tracking_abilities' );
 
 /**
  * Check whether the current user may set attendance for the requested user.

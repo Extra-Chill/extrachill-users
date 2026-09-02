@@ -7,7 +7,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_artist_dispatch_abilities' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_artist_dispatch_abilities' );
 
 /**
  * Administrative permission shared by registration and execution checks.

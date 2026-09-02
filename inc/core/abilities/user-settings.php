@@ -19,7 +19,7 @@ const EXTRACHILL_USERS_LOCAL_SCENE_PROMPT_DISMISSED_META_KEY = '_extrachill_loca
 const EXTRACHILL_USERS_CONCERT_HISTORY_VISIBILITY_META_KEY   = '_extrachill_concert_history_visibility';
 const EXTRACHILL_USERS_EVENT_ATTENDANCE_VISIBILITY_META_KEY  = '_extrachill_event_attendance_visibility';
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_settings_abilities' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_settings_abilities' );
 add_action( 'user_register', 'extrachill_users_set_new_user_visibility_defaults' );
 add_action( 'extrachill_users_visibility_changed', 'extrachill_users_purge_visibility_caches', 10, 4 );
 

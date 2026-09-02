@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_local_scene_members_ability' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_local_scene_members_ability' );
 
 /**
  * Register the public Local Scene member directory ability.
