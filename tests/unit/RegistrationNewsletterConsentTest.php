@@ -62,7 +62,7 @@ class RegistrationNewsletterConsentTest extends WP_UnitTestCase {
 
 	/** Delivery failure remains non-fatal and preserves the consent receipt. */
 	public function test_delivery_failure_does_not_erase_affirmative_consent(): void {
-		$user_id = self::factory()->user->create();
+		$user_id                                      = self::factory()->user->create();
 		$GLOBALS['extrachill_test_newsletter_result'] = array(
 			'success' => false,
 			'status'  => 'error',

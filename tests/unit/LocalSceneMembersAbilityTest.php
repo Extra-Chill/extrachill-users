@@ -19,7 +19,10 @@ class Test_Local_Scene_Members_Ability extends WP_UnitTestCase {
 		register_taxonomy( 'location', 'post', array( 'public' => true ) );
 		$region = wp_insert_term( 'USA', 'location' );
 		$state  = wp_insert_term( 'South Carolina', 'location', array( 'parent' => $region['term_id'] ) );
-		wp_insert_term( 'Charleston', 'location', array( 'slug' => 'charleston-sc', 'parent' => $state['term_id'] ) );
+		wp_insert_term( 'Charleston', 'location', array(
+			'slug'   => 'charleston-sc',
+			'parent' => $state['term_id'],
+		) );
 		restore_current_blog();
 	}
 

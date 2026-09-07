@@ -192,7 +192,7 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 	}
 
 	public function test_login_barrier_records_every_concurrent_failure(): void {
-		$key                           = ec_get_login_attempt_key( 'person@example.com' );
+		$key                            = ec_get_login_attempt_key( 'person@example.com' );
 		$this->cache->after_add_pattern = '_total';
 		$this->cache->after_add         = static function (): void {
 			for ( $attempt = 0; $attempt < 5; ++$attempt ) {
@@ -207,14 +207,14 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 	public function test_login_identity_aliases_share_canonical_counter_key(): void {
 		$GLOBALS['wp_object_cache'] = $this->original_cache;
 		wp_using_ext_object_cache( $this->original_ext_cache );
-		$user_id = self::factory()->user->create(
+		$user_id                    = self::factory()->user->create(
 			array(
 				'user_login' => 'canonical-person',
 				'user_email' => 'canonical@example.com',
 			)
 		);
-		$login_key = ec_get_login_attempt_key( 'canonical-person' );
-		$email_key = ec_get_login_attempt_key( 'canonical@example.com' );
+		$login_key                  = ec_get_login_attempt_key( 'canonical-person' );
+		$email_key                  = ec_get_login_attempt_key( 'canonical@example.com' );
 		$GLOBALS['wp_object_cache'] = $this->cache;
 		wp_using_ext_object_cache( true );
 
@@ -254,7 +254,7 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 	}
 
 	public function test_login_add_loser_cannot_create_ttl_less_key_at_boundary(): void {
-		$window_end = ( intdiv( $this->cache->now, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) + 1 ) * EXTRACHILL_USERS_LOGIN_RATE_WINDOW;
+		$window_end                     = ( intdiv( $this->cache->now, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) + 1 ) * EXTRACHILL_USERS_LOGIN_RATE_WINDOW;
 		$this->cache->now               = $window_end - 1;
 		$this->cache->after_add_pattern = '_total';
 		$this->cache->after_add         = static function (): void {
@@ -262,7 +262,7 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 		};
 
 		ec_record_failed_login( 'person@example.com' );
-		$old_total_key = ec_get_login_attempt_key( 'person@example.com' ) . '_window_' . intdiv( $this->cache->now, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) . '_total';
+		$old_total_key     = ec_get_login_attempt_key( 'person@example.com' ) . '_window_' . intdiv( $this->cache->now, EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) . '_total';
 		$this->cache->now += 2;
 
 		$this->assertSame( ( 2 * EXTRACHILL_USERS_LOGIN_RATE_WINDOW ) - 2, $this->cache->ttl( $old_total_key, EXTRACHILL_USERS_LOGIN_CACHE_GROUP ) );
@@ -313,7 +313,7 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 	}
 
 	public function test_password_reset_add_loser_cannot_create_ttl_less_key_at_boundary(): void {
-		$window_end = ( intdiv( $this->cache->now, EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW ) + 1 ) * EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW;
+		$window_end                     = ( intdiv( $this->cache->now, EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW ) + 1 ) * EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW;
 		$this->cache->now               = $window_end - 1;
 		$this->cache->after_add_pattern = 'ec_password_reset_attempts_';
 		$this->cache->after_add         = static function (): void {
@@ -321,7 +321,7 @@ class Test_Authentication_Rate_Limits extends WP_UnitTestCase {
 		};
 
 		ec_record_password_reset_attempt();
-		$old_key = ec_get_password_reset_attempt_key() . '_window_' . intdiv( $this->cache->now, EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW );
+		$old_key           = ec_get_password_reset_attempt_key() . '_window_' . intdiv( $this->cache->now, EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW );
 		$this->cache->now += 2;
 
 		$this->assertSame( ( 2 * EXTRACHILL_USERS_PASSWORD_RESET_RATE_WINDOW ) - 2, $this->cache->ttl( $old_key, EXTRACHILL_USERS_PASSWORD_RESET_CACHE_GROUP ) );

@@ -13,9 +13,9 @@ if ( empty( $_SERVER['REMOTE_ADDR'] ) ) {
 }
 
 function extrachill_auth_fuzz_registration_admitter() {
-	$key   = extrachill_users_registration_attempt_key();
-	$state = get_site_option( 'extrachill_auth_fuzz_registration_attempts', array() );
-	$count = (int) ( $state[ $key ] ?? 0 ) + 1;
+	$key           = extrachill_users_registration_attempt_key();
+	$state         = get_site_option( 'extrachill_auth_fuzz_registration_attempts', array() );
+	$count         = (int) ( $state[ $key ] ?? 0 ) + 1;
 	$state[ $key ] = $count;
 	update_site_option( 'extrachill_auth_fuzz_registration_attempts', $state );
 
@@ -90,9 +90,9 @@ add_action(
 		if ( ! isset( $_GET['auth_fuzz_observe'] ) ) {
 			return;
 		}
-		$key = sanitize_key( wp_unslash( $_GET['auth_fuzz_observe'] ) );
-		$observations = get_site_option( 'extrachill_auth_fuzz_browser_observations', array() );
-		$cookie = isset( $_COOKIE[ LOGGED_IN_COOKIE ] ) ? (string) $_COOKIE[ LOGGED_IN_COOKIE ] : '';
+		$key                  = sanitize_key( wp_unslash( $_GET['auth_fuzz_observe'] ) );
+		$observations         = get_site_option( 'extrachill_auth_fuzz_browser_observations', array() );
+		$cookie               = isset( $_COOKIE[ LOGGED_IN_COOKIE ] ) ? (string) $_COOKIE[ LOGGED_IN_COOKIE ] : '';
 		$observations[ $key ] = array(
 			'user_id'     => get_current_user_id(),
 			'cookie_hash' => '' !== $cookie ? hash( 'sha256', $cookie ) : '',

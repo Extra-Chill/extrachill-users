@@ -168,7 +168,7 @@ class Test_Notification_Delivery_Receipts extends WP_UnitTestCase {
 		$actor     = self::factory()->user->create();
 		$recipient = self::factory()->user->create();
 
-		$owned = ec_users_notify_with_receipts(
+		$owned    = ec_users_notify_with_receipts(
 			$recipient,
 			$this->payload( $actor, array( 'producer_owns_email' => true ) )
 		);

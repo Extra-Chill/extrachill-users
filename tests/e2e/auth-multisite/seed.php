@@ -1,7 +1,7 @@
 <?php
 
 $sites = get_site_option( 'extrachill_auth_fuzz_sites', array() );
-$plan = get_site_option( 'extrachill_auth_fuzz_plan', array() );
+$plan  = get_site_option( 'extrachill_auth_fuzz_plan', array() );
 if ( count( $sites ) !== 4 || empty( $plan['seed'] ) ) {
 	throw new RuntimeException( 'Auth fuzz topology or case plan is missing.' );
 }
@@ -93,6 +93,9 @@ update_site_option(
 		'blocked_user_id'    => (int) $blocked_id,
 		'onboarding_user_id' => (int) $onboarding_id,
 		'victim_user_id'     => (int) $victim_id,
-		'initial_user_count' => count( get_users( array( 'blog_id' => 0, 'fields' => 'ID' ) ) ),
+		'initial_user_count' => count( get_users( array(
+			'blog_id' => 0,
+			'fields'  => 'ID',
+		) ) ),
 	)
 );

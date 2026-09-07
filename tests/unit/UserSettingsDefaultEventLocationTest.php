@@ -401,7 +401,7 @@ class Test_User_Settings_Default_Event_Location extends WP_UnitTestCase {
 	 * Effective visibility changes publish one generic Users-owned transition.
 	 */
 	public function test_visibility_transition_action_contains_setting_and_values(): void {
-		$user_id     = self::factory()->user->create();
+		$user_id = self::factory()->user->create();
 		delete_user_meta( $user_id, EXTRACHILL_USERS_CONCERT_HISTORY_VISIBILITY_META_KEY );
 		delete_user_meta( $user_id, EXTRACHILL_USERS_EVENT_ATTENDANCE_VISIBILITY_META_KEY );
 		$transitions = array();
@@ -431,7 +431,7 @@ class Test_User_Settings_Default_Event_Location extends WP_UnitTestCase {
 	 * Failed metadata writes remain private and publish no transition.
 	 */
 	public function test_visibility_write_failure_returns_error_without_transition(): void {
-		$user_id     = self::factory()->user->create();
+		$user_id = self::factory()->user->create();
 		wp_set_current_user( $user_id );
 		$transitions = 0;
 		$block_write = static function ( $check, int $object_id, string $meta_key ) use ( $user_id ) {
@@ -441,7 +441,7 @@ class Test_User_Settings_Default_Event_Location extends WP_UnitTestCase {
 
 			return $check;
 		};
-		$listener = static function () use ( &$transitions ): void {
+		$listener    = static function () use ( &$transitions ): void {
 			++$transitions;
 		};
 		add_filter( 'update_user_metadata', $block_write, 10, 3 );

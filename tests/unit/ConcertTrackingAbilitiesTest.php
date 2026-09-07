@@ -280,14 +280,14 @@ class Test_Concert_Tracking_Abilities extends WP_UnitTestCase {
 	 * @dataProvider invalid_reader_input_provider
 	 */
 	public function test_registered_reader_abilities_reject_malformed_and_out_of_range_inputs( string $ability_name, string $field, $value ): void {
-		$input = 'extrachill/get-user-shows' === $ability_name
+		$input  = 'extrachill/get-user-shows' === $ability_name
 			? array(
 				'user_id' => $this->user_id,
-				$field     => $value,
+				$field    => $value,
 			)
 			: array(
 				'event_id' => $this->event_id,
-				$field      => $value,
+				$field     => $value,
 			);
 		$result = wp_get_ability( $ability_name )->execute( $input );
 

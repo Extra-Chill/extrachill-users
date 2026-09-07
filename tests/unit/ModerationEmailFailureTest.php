@@ -29,7 +29,7 @@ class Test_Moderation_Email_Failure extends WP_UnitTestCase {
 
 	public function test_wp_error_queue_result_returns_false_without_fatal(): void {
 		$GLOBALS['test_ec_send_email_queued_result'] = new WP_Error( 'queue_unavailable' );
-		$user = self::factory()->user->create_and_get();
+		$user                                        = self::factory()->user->create_and_get();
 
 		$this->assertFalse(
 			extrachill_users_send_moderation_email(

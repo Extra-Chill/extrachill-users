@@ -80,7 +80,7 @@ class Test_Concert_Import_Auth_Provider extends WP_UnitTestCase {
 		$provider = new SetlistFmAuthProvider();
 		$provider->save_config( array( 'api_key' => 'plaintext-key' ) );
 
-		$raw = get_site_option( 'datamachine_auth_data', array() );
+		$raw    = get_site_option( 'datamachine_auth_data', array() );
 		$stored = $raw[ SetlistFmAuthProvider::PROVIDER_SLUG ]['config']['api_key'] ?? '';
 
 		$this->assertNotEmpty( $stored, 'API key must be persisted.' );
@@ -115,7 +115,7 @@ class Test_Concert_Import_Auth_Provider extends WP_UnitTestCase {
 		( new PhishNetAuthProvider() )->save_config( array( 'api_key' => 'phish-only' ) );
 
 		$this->assertSame( 'setlist-only', ( new SetlistFmAuthProvider() )->get_api_key() );
-		$this->assertSame( 'phish-only',   ( new PhishNetAuthProvider() )->get_api_key() );
+		$this->assertSame( 'phish-only', ( new PhishNetAuthProvider() )->get_api_key() );
 
 		// Storage layout: each provider gets its own top-level key.
 		$raw = get_site_option( 'datamachine_auth_data', array() );

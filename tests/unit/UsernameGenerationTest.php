@@ -18,8 +18,14 @@ class Test_Username_Generation extends WP_UnitTestCase {
 	}
 
 	public function test_username_from_email_uniqueness(): void {
-		self::factory()->user->create( array( 'user_login' => 'john', 'user_email' => 'john@first.com' ) );
-		self::factory()->user->create( array( 'user_login' => 'john1', 'user_email' => 'john@second.com' ) );
+		self::factory()->user->create( array(
+			'user_login' => 'john',
+			'user_email' => 'john@first.com',
+		) );
+		self::factory()->user->create( array(
+			'user_login' => 'john1',
+			'user_email' => 'john@second.com',
+		) );
 
 		$this->assertSame( 'john2', ec_generate_username_from_email( 'john@third.com' ) );
 	}
@@ -37,7 +43,10 @@ class Test_Username_Generation extends WP_UnitTestCase {
 	}
 
 	public function test_get_unique_username_with_collision(): void {
-		self::factory()->user->create( array( 'user_login' => 'testuser', 'user_email' => 'test@example.com' ) );
+		self::factory()->user->create( array(
+			'user_login' => 'testuser',
+			'user_email' => 'test@example.com',
+		) );
 		$this->assertSame( 'testuser1', ec_get_unique_username( 'testuser' ) );
 	}
 

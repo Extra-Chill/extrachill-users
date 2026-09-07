@@ -289,7 +289,10 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 			42,
 			'someone@example.com',
 			'Test Subject',
-			array( 'success' => false, 'error' => 'Explicit error string' )
+			array(
+				'success' => false,
+				'error'   => 'Explicit error string',
+			)
 		);
 
 		$log = $this->read_error_log();
@@ -306,7 +309,10 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 			42,
 			'someone@example.com',
 			'Test Subject',
-			array( 'success' => false, 'message' => 'Message string instead' )
+			array(
+				'success' => false,
+				'message' => 'Message string instead',
+			)
 		);
 
 		$this->assertStringContainsString( 'Message string instead', $this->read_error_log() );

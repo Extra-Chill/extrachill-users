@@ -16,9 +16,9 @@ class Test_Password_Claim extends WP_UnitTestCase {
 	}
 
 	public function test_successful_custom_password_claim_runs_completion_in_order(): void {
-		$user = $this->create_user();
-		$key  = get_password_reset_key( $user );
-		$order = array();
+		$user         = $this->create_user();
+		$key          = get_password_reset_key( $user );
+		$order        = array();
 		$before_reset = static function ( $reset_user ) use ( &$order ): void {
 			$order[] = 'password_reset:' . get_user_meta( $reset_user->ID, 'ec_unclaimed', true );
 		};
@@ -44,7 +44,7 @@ class Test_Password_Claim extends WP_UnitTestCase {
 	}
 
 	public function test_invalid_custom_reset_key_does_not_clear_unclaimed_marker(): void {
-		$user = $this->create_user();
+		$user   = $this->create_user();
 		$result = ec_process_reset_password_submission( 'invalid-key', $user->user_login, 'new-secure-password', 'new-secure-password' );
 
 		$this->assertWPError( $result );
@@ -90,7 +90,7 @@ class Test_Password_Claim extends WP_UnitTestCase {
 	}
 
 	public function test_core_reset_preserves_unclaimed_marker_when_deletion_fails(): void {
-		$user = $this->create_user();
+		$user           = $this->create_user();
 		$block_deletion = static function ( $check, $object_id, $meta_key ) use ( $user ) {
 			if ( $user->ID === (int) $object_id && 'ec_unclaimed' === $meta_key ) {
 				return false;
@@ -119,8 +119,8 @@ class Test_Password_Claim extends WP_UnitTestCase {
 	}
 
 	public function test_custom_claim_reports_marker_deletion_failure(): void {
-		$user = $this->create_user();
-		$key  = get_password_reset_key( $user );
+		$user           = $this->create_user();
+		$key            = get_password_reset_key( $user );
 		$block_deletion = static function ( $check, $object_id, $meta_key ) use ( $user ) {
 			if ( $user->ID === (int) $object_id && 'ec_unclaimed' === $meta_key ) {
 				return false;

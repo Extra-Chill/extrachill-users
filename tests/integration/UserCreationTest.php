@@ -342,10 +342,10 @@ class Test_User_Creation extends WP_UnitTestCase {
 	public function test_sanitize_utm_filters_to_canonical_keys(): void {
 		$clean = extrachill_users_sanitize_utm(
 			array(
-				'source'    => 'reddit',
-				'medium'    => '',
-				'gclid'     => 'should-be-dropped',
-				'campaign'  => 'spring',
+				'source'   => 'reddit',
+				'medium'   => '',
+				'gclid'    => 'should-be-dropped',
+				'campaign' => 'spring',
 			)
 		);
 

@@ -33,16 +33,27 @@ final class FakeConfigurableImportSource implements ImportSource {
 		return $this->label;
 	}
 	public function rate_limit(): array {
-		return array( 'requests_per_second' => 1.0, 'requests_per_day' => 1000 );
+		return array(
+			'requests_per_second' => 1.0,
+			'requests_per_day'    => 1000,
+		);
 	}
 	public function is_configured(): bool {
 		return $this->configured;
 	}
 	public function preview( string $username ) {
-		return array( 'total' => 0, 'username' => $username );
+		return array(
+			'total'    => 0,
+			'username' => $username,
+		);
 	}
 	public function fetch_page( string $username, int $page ) {
-		return array( 'events' => array(), 'total_pages' => 1, 'total' => 0, 'page' => 1 );
+		return array(
+			'events'      => array(),
+			'total_pages' => 1,
+			'total'       => 0,
+			'page'        => 1,
+		);
 	}
 }
 
@@ -96,7 +107,7 @@ class Test_List_Concert_Import_Sources_Ability extends WP_UnitTestCase {
 		$result = extrachill_users_ability_list_concert_import_sources(
 			array( 'include_unconfigured' => true )
 		);
-		$slugs = array_map( static fn( $s ) => $s['slug'], $result['sources'] );
+		$slugs  = array_map( static fn( $s ) => $s['slug'], $result['sources'] );
 
 		$this->assertNotContains(
 			'unconfigured-source',
@@ -112,7 +123,7 @@ class Test_List_Concert_Import_Sources_Ability extends WP_UnitTestCase {
 		$result = extrachill_users_ability_list_concert_import_sources(
 			array( 'include_unconfigured' => true )
 		);
-		$slugs = array_map( static fn( $s ) => $s['slug'], $result['sources'] );
+		$slugs  = array_map( static fn( $s ) => $s['slug'], $result['sources'] );
 
 		$this->assertContains( 'configured-source', $slugs );
 		$this->assertContains( 'unconfigured-source', $slugs );

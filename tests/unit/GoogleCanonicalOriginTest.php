@@ -183,5 +183,4 @@ class Test_Google_Canonical_Origin extends WP_UnitTestCase {
 		$_GET[ EC_USERS_GOOGLE_REDIRECT_PARAM ] = 'javascript:alert(1)';
 		$this->assertNull( ec_users_get_validated_google_redirect_from_request() );
 	}
-
 }

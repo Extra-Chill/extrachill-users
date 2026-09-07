@@ -67,9 +67,9 @@ class Test_Browser_Handoff_Token extends WP_UnitTestCase {
 	protected function setUp(): void {
 		parent::setUp();
 
-		$this->original_cache     = $GLOBALS['wp_object_cache'];
-		$this->original_ext_cache = wp_using_ext_object_cache();
-		$this->cache              = new Browser_Handoff_Test_Cache();
+		$this->original_cache       = $GLOBALS['wp_object_cache'];
+		$this->original_ext_cache   = wp_using_ext_object_cache();
+		$this->cache                = new Browser_Handoff_Test_Cache();
 		$GLOBALS['wp_object_cache'] = $this->cache;
 		wp_using_ext_object_cache( true );
 	}

@@ -33,14 +33,14 @@ class Test_Registration_Redirect extends WP_UnitTestCase {
 	}
 
 	public function test_ordinary_google_registration_rejects_external_return_url(): void {
-		$redirect_url = ec_users_post_registration_redirect_url( false, false, 'https://attacker.example/calendar/' );
+		$redirect_url  = ec_users_post_registration_redirect_url( false, false, 'https://attacker.example/calendar/' );
 		$community_url = function_exists( 'ec_get_site_url' ) ? ec_get_site_url( 'community' ) : home_url();
 
 		$this->assertSame( $community_url, $redirect_url );
 	}
 
 	public function test_join_google_registration_still_requires_onboarding(): void {
-		$redirect_url = ec_users_post_registration_redirect_url( true, false, 'https://artist.extrachill.com/login/' );
+		$redirect_url  = ec_users_post_registration_redirect_url( true, false, 'https://artist.extrachill.com/login/' );
 		$community_url = function_exists( 'ec_get_site_url' ) ? ec_get_site_url( 'community' ) : home_url();
 
 		$this->assertSame( untrailingslashit( $community_url ) . '/onboarding/', $redirect_url );

@@ -27,7 +27,7 @@ class Test_Concert_History_Visibility extends WP_UnitTestCase {
 		$this->events_blog_id = self::factory()->blog->create();
 		$this->user_id        = self::factory()->user->create();
 		update_user_meta( $this->user_id, EXTRACHILL_USERS_CONCERT_HISTORY_VISIBILITY_META_KEY, 'public' );
-		$this->dates_table    = $wpdb->get_blog_prefix( $this->events_blog_id ) . 'datamachine_event_dates';
+		$this->dates_table = $wpdb->get_blog_prefix( $this->events_blog_id ) . 'datamachine_event_dates';
 
 		extrachill_users_install_concert_tracking_table();
 
@@ -113,14 +113,17 @@ class Test_Concert_History_Visibility extends WP_UnitTestCase {
 		$this->write_event_date( $deleted, '2025-01-10 20:00:00' );
 
 		$original_blog_id = get_current_blog_id();
-		$history         = ec_users_get_user_events( $this->user_id, array( 'blog_id' => $this->events_blog_id ) );
+		$history          = ec_users_get_user_events( $this->user_id, array( 'blog_id' => $this->events_blog_id ) );
 		$this->assertSame( $original_blog_id, get_current_blog_id(), 'History enrichment must restore the calling blog.' );
 
 		$stats = ec_users_get_user_concert_stats( $this->user_id, array( 'blog_id' => $this->events_blog_id ) );
 		$this->assertSame( $original_blog_id, get_current_blog_id(), 'Stats enrichment must restore the calling blog.' );
 		$this->assertSame( 2, $history['total'] );
 		$this->assertSame( 2, $stats['total_shows'] );
-		$this->assertSame( array( '2024' => 1, '2023' => 1 ), $stats['shows_by_year'] );
+		$this->assertSame( array(
+			'2024' => 1,
+			'2023' => 1,
+		), $stats['shows_by_year'] );
 		$this->assertSame( $first, $stats['first_show']['event_id'] );
 		$this->assertSame( 'First Public', $stats['first_show']['title'] );
 		$this->assertSame( $latest, $stats['latest_show']['event_id'] );
