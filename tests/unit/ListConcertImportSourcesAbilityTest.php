@@ -7,6 +7,8 @@
  * is platform plumbing, not actionable UX. Admins can explicitly request the
  * unconfigured list for setup/debugging.
  */
+require_once __DIR__ . '/support/class-fake-configurable-import-source.php';
+
 
 use ExtraChill\Users\Concert_Import\ImportSource;
 use ExtraChill\Users\Concert_Import\ExternalEvent;
@@ -17,46 +19,6 @@ use ExtraChill\Users\Concert_Import\ExternalEvent;
  * Lives inside this test file so we don't pollute the source tree with a
  * test-only fixture class.
  */
-final class FakeConfigurableImportSource implements ImportSource {
-
-	public function __construct(
-		private string $slug,
-		private string $label,
-		private bool $configured
-	) {
-	}
-
-	public function slug(): string {
-		return $this->slug;
-	}
-	public function label(): string {
-		return $this->label;
-	}
-	public function rate_limit(): array {
-		return array(
-			'requests_per_second' => 1.0,
-			'requests_per_day'    => 1000,
-		);
-	}
-	public function is_configured(): bool {
-		return $this->configured;
-	}
-	public function preview( string $username ) {
-		return array(
-			'total'    => 0,
-			'username' => $username,
-		);
-	}
-	public function fetch_page( string $username, int $page ) {
-		return array(
-			'events'      => array(),
-			'total_pages' => 1,
-			'total'       => 0,
-			'page'        => 1,
-		);
-	}
-}
-
 class Test_List_Concert_Import_Sources_Ability extends WP_UnitTestCase {
 
 	/**
