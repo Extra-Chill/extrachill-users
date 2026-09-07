@@ -37,6 +37,20 @@ jobs:
           client-id: ${{ secrets.HOMEBOY_APP_ID }}
           private-key: ${{ secrets.HOMEBOY_APP_PRIVATE_KEY }}
 
+      # A harness change (component config or this workflow) is the one change a
+      # changed-scope run cannot evidence, so run the full suite when one is present.
+      - name: Resolve review scope
+        id: scope
+        run: |
+          scope=auto
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if git diff --name-only "${{ github.event.pull_request.base.sha }}...HEAD" \
+              | grep -qxE 'homeboy\.json|\.github/workflows/homeboy\.yml'; then
+              scope=full
+            fi
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+
       - name: Install native MariaDB containment tools
         if: matrix.command == 'review test'
         run: |
@@ -51,5 +65,6 @@ jobs:
         with:
           commands: ${{ matrix.command }}
           expected-commands: review lint,review test
+          scope: ${{ steps.scope.outputs.scope }}
           app-token: ${{ steps.app-token.outputs.token || github.token }}
           differential-gating: 'true'
