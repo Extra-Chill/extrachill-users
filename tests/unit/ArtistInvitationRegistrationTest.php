@@ -171,8 +171,10 @@ class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 		$this->assertSame( 2, $request_count );
 	}
 
-	public function pass_turnstile(): bool {
-		return true;
+	public function pass_turnstile(): callable {
+		// The extrachill_users_registration_turnstile_verifier filter replaces
+		// the verifier callable; return a passing verifier, not a verdict.
+		return '__return_true';
 	}
 
 	public function admit_registration(): bool {
