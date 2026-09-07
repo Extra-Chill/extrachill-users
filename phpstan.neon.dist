@@ -22,6 +22,8 @@ parameters:
 	scanFiles:
 		- extrachill-users.php
 		- tests/phpstan-stubs.php
+		- tests/phpstan-stubs-oauth.php
+		- tests/phpstan-stubs-abilities.php
 		- vendor/php-stubs/wp-cli-stubs/wp-cli-stubs.php
 	stubFiles:
 		- tests/phpstan-wordpress-overrides.php
