@@ -29,7 +29,7 @@ function extrachill_users_get_user_content_objects( int $user_id ): array {
 			// types like bbPress `topic` / `reply` and per-site CPTs are NOT
 			// registered when this runs from another site's request — and
 			// would be silently skipped, leaving banned users' content live.
-			$post_ids = $wpdb->get_col(
+			$post_ids = (array) $wpdb->get_col(
 				$wpdb->prepare(
 					"SELECT ID FROM {$wpdb->posts}
 					 WHERE post_author = %d
@@ -461,11 +461,12 @@ function extrachill_users_capture_bbp_context( array $objects ): array {
 					continue;
 				}
 
+				$post_parent = (int) get_post_field( 'post_parent', $post );
 				if ( 'topic' === $post->post_type ) {
 					$topic_id = (int) $post->ID;
-					$forum_id = (int) $post->post_parent;
+					$forum_id = $post_parent;
 				} else {
-					$topic_id = extrachill_users_resolve_reply_topic_id( (int) $post->post_parent );
+					$topic_id = extrachill_users_resolve_reply_topic_id( $post_parent );
 					if ( $topic_id <= 0 ) {
 						continue;
 					}
@@ -505,7 +506,7 @@ function extrachill_users_resolve_reply_topic_id( int $parent_id ): int {
 		if ( 'reply' !== $parent->post_type ) {
 			return (int) $parent->ID;
 		}
-		$parent_id = (int) $parent->post_parent;
+		$parent_id = (int) get_post_field( 'post_parent', $parent );
 	}
 
 	return 0;
@@ -697,37 +698,47 @@ function extrachill_users_bbp_update_forum_counters( int $forum_id ): void {
 	$last_active_id = 0;
 
 	// bbPress resolves pointer fields via topics structurally parented to the
-	// forum (publish/closed), unlike the meta-based counts above.
-	$max_topic_id = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- bbPress CPTs are not registered in the moderation request context.
+	// forum (publish/closed), unlike the meta-based counts above. The reply
+	// lookup stays parent-list based (like bbPress' own WP_Query usage) — a
+	// posts-to-posts self-join is avoided because shared-table SQL engines
+	// used by sandboxed runtimes reject it ("Can't reopen table").
+	$topic_ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- bbPress CPTs are not registered in the moderation request context.
 		$wpdb->prepare(
-			"SELECT MAX( ID )
+			"SELECT ID
 			 FROM {$wpdb->posts}
 			 WHERE post_type = 'topic'
 			   AND post_status IN ( 'publish', 'closed' )
-			   AND post_parent = %d",
+			   AND post_parent = %d
+			 ORDER BY ID DESC",
 			$forum_id
 		)
 	);
+	$topic_ids = array_map( 'intval', (array) $topic_ids );
 
-	if ( $max_topic_id > 0 ) {
-		$last_reply_id = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- bbPress CPTs are not registered in the moderation request context.
-			$wpdb->prepare(
-				"SELECT r.ID
-				 FROM {$wpdb->posts} r
-				 JOIN {$wpdb->posts} t ON r.post_parent = t.ID
-				 WHERE r.post_type = 'reply'
-				   AND r.post_status = 'publish'
-				   AND t.post_type = 'topic'
-				   AND t.post_status IN ( 'publish', 'closed' )
-				   AND t.post_parent = %d
-				 ORDER BY r.post_date DESC, r.ID DESC
-				 LIMIT 1",
-				$forum_id
+	if ( ! empty( $topic_ids ) ) {
+		$reply_ids = get_posts(
+			array(
+				'post_type'              => 'reply',
+				'post_status'            => 'publish',
+				'post_parent__in'        => $topic_ids,
+				'posts_per_page'         => 1,
+				'orderby'                => array(
+					'post_date' => 'DESC',
+					'ID'        => 'DESC',
+				),
+				'fields'                 => 'ids',
+				'suppress_filters'       => true,
+				'update_post_term_cache' => false,
+				'update_post_meta_cache' => false,
+				'ignore_sticky_posts'    => true,
+				'no_found_rows'          => true,
 			)
 		);
 
+		$last_reply_id = empty( $reply_ids ) ? 0 : (int) $reply_ids[0];
+
 		// bbPress compares the newest reply ID with the highest topic ID.
-		$last_reply_id  = max( $last_reply_id, $max_topic_id );
+		$last_reply_id  = max( $last_reply_id, max( $topic_ids ) );
 		$last_active_id = $last_reply_id;
 	}
 
