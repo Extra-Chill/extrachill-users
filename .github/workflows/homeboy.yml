@@ -68,15 +68,5 @@ jobs:
           expected-commands: review lint,review test
           scope: ${{ matrix.command == 'review test' && steps.scope.outputs.scope || 'auto' }}
 
-      - name: Native MariaDB readiness (diagnostic)
-        if: failure() && matrix.command == 'review test'
-        run: |
-          bin="$HOME/.cache/homeboy/wp-codebox/source/packages/cli/dist/index.js"
-          [ -f "$bin" ] || { echo "wp-codebox CLI not installed"; exit 0; }
-          node "$bin" runtime descriptor --json | jq '.runtimeServices.nativeMariaDb'
-          for t in mariadbd mariadb-install-db mariadb prlimit truncate mkfs.ext4 fuse2fs fusermount3; do
-            printf '%-20s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
-          done
-          ls -la /dev/fuse || true
           app-token: ${{ steps.app-token.outputs.token || github.token }}
           differential-gating: 'true'
