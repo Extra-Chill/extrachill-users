@@ -133,18 +133,30 @@ function extrachill_users_send_moderation_email( WP_User $user, array $status ) 
 		$body_html .= '<p><strong>' . esc_html__( 'Reason:', 'extrachill-users' ) . '</strong> ' . esc_html( $reason ) . '</p>';
 	}
 
-	$result = ec_send_email_queued(
-		array(
-			'to'       => $user->user_email,
-			'subject'  => $subject,
-			'template' => 'extrachill/minimal',
-			'context'  => array(
-				'subject_html'   => esc_html( $subject ),
-				'body_html'      => $body_html,
-				'recipient_name' => $user->display_name,
-			),
-		)
+	$queue_args = array(
+		'to'       => $user->user_email,
+		'subject'  => $subject,
+		'template' => 'extrachill/minimal',
+		'context'  => array(
+			'subject_html'   => esc_html( $subject ),
+			'body_html'      => $body_html,
+			'recipient_name' => $user->display_name,
+		),
 	);
+
+	/**
+	 * Short-circuit the moderation email transport.
+	 *
+	 * Return a non-null value to bypass ec_send_email_queued() and use the
+	 * returned value as the queue result. Tests use this to substitute a
+	 * deterministic transport because PHPUnit process isolation is unavailable
+	 * in the managed CI sandbox.
+	 *
+	 * @param mixed $pre        Short-circuit queue result (array|WP_Error|null). Null to continue.
+	 * @param array $queue_args Arguments about to be forwarded to ec_send_email_queued().
+	 */
+	$pre    = apply_filters( 'extrachill_users_pre_send_moderation_email', null, $queue_args );
+	$result = null !== $pre ? $pre : ec_send_email_queued( $queue_args );
 
 	return is_array( $result ) && ! empty( $result['success'] );
 }

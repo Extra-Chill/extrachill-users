@@ -11,12 +11,11 @@
  *   - (welcome-email path) return false so the orchestrator does NOT mark
  *     welcome_email_sent=1 — letting the hourly cron retry pick it up
  *
- * These tests run in separate processes so we can define our own
- * ec_send_email() stub (the real one lives in extrachill-network and is
- * unavailable in the unit-test bootstrap).
- *
- * @runTestsInSeparateProcesses
- * @preserveGlobalState disabled
+ * The transport is substituted through the
+ * extrachill_users_pre_send_registration_email filter seam rather than a
+ * function stub: PHPUnit process isolation is unavailable in the managed CI
+ * sandbox, and the real extrachill-network ec_send_email() cannot be
+ * redefined in-process.
  */
 
 class Test_Registration_Email_Failure extends WP_UnitTestCase {
@@ -48,33 +47,23 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 		self::$captured_wp_mail = array();
 		add_filter( 'pre_wp_mail', array( __CLASS__, 'capture_wp_mail' ), 10, 2 );
 
-		// Load the SUT and the canonical ec_send_email() stub. The stub is
-		// declared in a sibling helper file so each test process can flip the
-		// return value via a global before exercising the SUT.
 		require_once dirname( __DIR__, 2 ) . '/inc/core/registration-emails.php';
 
-		if ( ! function_exists( 'ec_send_email' ) ) {
-			eval(
-				'function ec_send_email( array $args ) {' .
-				'    $GLOBALS["test_ec_send_email_last_args"] = $args;' .
-				'    if ( isset( $GLOBALS["test_ec_send_email_result"] ) ) {' .
-				'        return $GLOBALS["test_ec_send_email_result"];' .
-				'    }' .
-				'    return array( "success" => true );' .
-				'}'
-			);
-		}
-
-		if ( ! function_exists( 'ec_get_site_url' ) ) {
-			eval( 'function ec_get_site_url( $site ) { return "https://community.extrachill.com"; }' );
-		}
-
-		if ( ! function_exists( 'extrachill_get_user_community_profile_edit_url' ) ) {
-			eval( 'function extrachill_get_user_community_profile_edit_url( $user_id, $user_email = "" ) { return "https://community.extrachill.com/u/test-user/edit/"; }' );
-		}
+		// Deterministic transport: record the forwarded args and return the
+		// forced result (defaulting to a success envelope).
+		add_filter(
+			'extrachill_users_pre_send_registration_email',
+			static function ( $pre, array $args ) {
+				$GLOBALS['test_ec_send_email_last_args'] = $args;
+				return $GLOBALS['test_ec_send_email_result'] ?? array( 'success' => true );
+			},
+			10,
+			2
+		);
 	}
 
 	protected function tearDown(): void {
+		remove_all_filters( 'extrachill_users_pre_send_registration_email' );
 		remove_filter( 'pre_wp_mail', array( __CLASS__, 'capture_wp_mail' ), 10 );
 
 		if ( $this->error_log_file && file_exists( $this->error_log_file ) ) {
@@ -266,7 +255,10 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 
 		$args = $GLOBALS['test_ec_send_email_last_args'];
 		$this->assertSame( 'Make yourself at home at Extra Chill', $args['subject'] );
-		$this->assertSame( 'https://community.extrachill.com', $args['context']['cta_url'] );
+		// URLs resolve through the canonical network resolvers; assert the
+		// wiring (template embeds the resolver output) rather than a pinned
+		// production domain, so the contract holds in any environment.
+		$this->assertSame( ec_get_site_url( 'community' ), $args['context']['cta_url'] );
 		$this->assertSame( 'See What’s Happening', $args['context']['cta_label'] );
 		$this->assertStringContainsString( 'online music scene', $args['context']['body_html'] );
 		$this->assertStringContainsString( 'There’s no setup checklist', $args['context']['body_html'] );
@@ -274,8 +266,11 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'Do I need to finish my profile?', $args['context']['body_html'] );
 		$this->assertStringContainsString( 'Is Extra Chill just a music blog?', $args['context']['body_html'] );
 		$this->assertStringContainsString( 'Find shows and track concerts', $args['context']['body_html'] );
-		$this->assertStringContainsString( 'https://community.extrachill.com/u/test-user/edit/', $args['context']['body_html'] );
-		$this->assertStringNotContainsString( 'https://community.extrachill.com/settings/', $args['context']['body_html'] );
+		$this->assertStringContainsString(
+			esc_url( extrachill_get_user_community_profile_edit_url( $user_data->ID, $user_data->user_email ) ),
+			$args['context']['body_html']
+		);
+		$this->assertStringNotContainsString( ec_get_site_url( 'community' ) . '/settings/', $args['context']['body_html'] );
 		$this->assertDoesNotMatchRegularExpression( '/\bfollow(?:er|ers|ing|s|ed)?\b/i', $args['context']['body_html'] );
 	}
 

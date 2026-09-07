@@ -59,6 +59,25 @@ class Browser_Handoff_Test_Cache {
 	public function switch_to_blog( $blog_id ): bool {
 		return true;
 	}
+
+	/**
+	 * Core group operations (e.g. get_multiple in WP 6.1+ cache API) may be
+	 * reached through the same call chain.
+	 *
+	 * @param array  $keys  Cache keys.
+	 * @param string $group Cache group.
+	 * @return array
+	 */
+	public function get_multiple( $keys, $group = 'default' ): array {
+		$found = array();
+		foreach ( (array) $keys as $key ) {
+			$value = $this->get( $key, $group );
+			if ( false !== $value ) {
+				$found[ $key ] = $value;
+			}
+		}
+		return $found;
+	}
 }
 
 class Test_Browser_Handoff_Token extends WP_UnitTestCase {

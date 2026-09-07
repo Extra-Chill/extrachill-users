@@ -2,8 +2,11 @@
 /**
  * Regression coverage for moderation email queue failures.
  *
- * @runTestsInSeparateProcesses
- * @preserveGlobalState disabled
+ * The transport is substituted through the
+ * extrachill_users_pre_send_moderation_email filter seam rather than a
+ * function stub: PHPUnit process isolation is unavailable in the managed CI
+ * sandbox, and the real extrachill-network ec_send_email_queued() cannot be
+ * redefined in-process.
  */
 
 class Test_Moderation_Email_Failure extends WP_UnitTestCase {
@@ -11,18 +14,20 @@ class Test_Moderation_Email_Failure extends WP_UnitTestCase {
 	protected function setUp(): void {
 		parent::setUp();
 
-		if ( ! function_exists( 'ec_send_email_queued' ) ) {
-			eval(
-				'function ec_send_email_queued( array $args ) {' .
-				'    return $GLOBALS["test_ec_send_email_queued_result"] ?? array( "success" => true );' .
-				'}'
-			);
-		}
+		add_filter(
+			'extrachill_users_pre_send_moderation_email',
+			static function ( $pre, array $args ) {
+				return $GLOBALS['test_ec_send_email_queued_result'] ?? array( 'success' => true );
+			},
+			10,
+			2
+		);
 
 		require_once dirname( __DIR__, 2 ) . '/inc/core/moderation/email.php';
 	}
 
 	protected function tearDown(): void {
+		remove_all_filters( 'extrachill_users_pre_send_moderation_email' );
 		unset( $GLOBALS['test_ec_send_email_queued_result'] );
 		parent::tearDown();
 	}

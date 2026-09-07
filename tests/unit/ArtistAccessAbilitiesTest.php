@@ -56,14 +56,29 @@ class Test_Artist_Access_Abilities extends WP_UnitTestCase {
 
 	/**
 	 * Subscribers cannot execute any administrative ability.
+	 *
+	 * Input validation runs before the permission check inside
+	 * WP_Ability::execute(), so each ability receives its schema-valid minimal
+	 * input to prove the rejection happens at the permission layer.
 	 */
 	public function test_registered_administrative_abilities_deny_subscribers(): void {
+		$target_id = self::factory()->user->create();
+		update_user_meta( $target_id, 'artist_access_request', array( 'type' => 'artist' ) );
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
 
-		foreach ( array( 'list-artist-access-requests', 'approve-artist-access', 'reject-artist-access' ) as $name ) {
-			$result = wp_get_ability( 'extrachill/' . $name )->execute( array() );
-			$this->assertWPError( $result );
-			$this->assertSame( 'ability_invalid_permissions', $result->get_error_code() );
+		$inputs = array(
+			'list-artist-access-requests' => array(),
+			'approve-artist-access'       => array(
+				'user_id' => $target_id,
+				'type'    => 'artist',
+			),
+			'reject-artist-access'        => array( 'user_id' => $target_id ),
+		);
+
+		foreach ( $inputs as $name => $input ) {
+			$result = wp_get_ability( 'extrachill/' . $name )->execute( $input );
+			$this->assertWPError( $result, $name );
+			$this->assertSame( 'ability_invalid_permissions', $result->get_error_code(), $name );
 		}
 	}
 
