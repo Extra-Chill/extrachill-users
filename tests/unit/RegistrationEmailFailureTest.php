@@ -42,7 +42,7 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 		// Capture error_log() output to a per-test temp file.
 		$this->error_log_file     = tempnam( sys_get_temp_dir(), 'ec_users_test_log_' );
 		$this->original_error_log = ini_get( 'error_log' );
-		ini_set( 'error_log', $this->error_log_file );
+		ini_set( 'error_log', $this->error_log_file ); // phpcs:ignore WordPress.PHP.IniSet.Risky -- the test asserts on error_log() output, which can only be redirected via this ini setting.
 
 		// Capture wp_mail() calls without actually sending mail.
 		self::$captured_wp_mail = array();
@@ -54,23 +54,44 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 		require_once dirname( __DIR__, 2 ) . '/inc/core/registration-emails.php';
 
 		if ( ! function_exists( 'ec_send_email' ) ) {
-			eval(
-				'function ec_send_email( array $args ) {' .
-				'    $GLOBALS["test_ec_send_email_last_args"] = $args;' .
-				'    if ( isset( $GLOBALS["test_ec_send_email_result"] ) ) {' .
-				'        return $GLOBALS["test_ec_send_email_result"];' .
-				'    }' .
-				'    return array( "success" => true );' .
-				'}'
-			);
+			/**
+			 * Test double: records args and returns the configured result.
+			 *
+			 * @param array<string,mixed> $args Email arguments.
+			 * @return array<string,mixed>
+			 */
+			function ec_send_email( array $args ) {
+				$GLOBALS['test_ec_send_email_last_args'] = $args;
+				if ( isset( $GLOBALS['test_ec_send_email_result'] ) ) {
+					return $GLOBALS['test_ec_send_email_result'];
+				}
+				return array( 'success' => true );
+			}
 		}
 
 		if ( ! function_exists( 'ec_get_site_url' ) ) {
-			eval( 'function ec_get_site_url( $site ) { return "https://community.extrachill.com"; }' );
+			/**
+			 * Test double: fixed Community site URL.
+			 *
+			 * @param string $site Site slug.
+			 * @return string
+			 */
+			function ec_get_site_url( $site ) {
+				return 'https://community.extrachill.com';
+			}
 		}
 
 		if ( ! function_exists( 'extrachill_get_user_community_profile_edit_url' ) ) {
-			eval( 'function extrachill_get_user_community_profile_edit_url( $user_id, $user_email = "" ) { return "https://community.extrachill.com/u/test-user/edit/"; }' );
+			/**
+			 * Test double: fixed Community profile edit URL.
+			 *
+			 * @param int    $user_id   User ID.
+			 * @param string $user_email User email.
+			 * @return string
+			 */
+			function extrachill_get_user_community_profile_edit_url( $user_id, $user_email = '' ) {
+				return 'https://community.extrachill.com/u/test-user/edit/';
+			}
 		}
 	}
 
@@ -78,10 +99,10 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 		remove_filter( 'pre_wp_mail', array( __CLASS__, 'capture_wp_mail' ), 10 );
 
 		if ( $this->error_log_file && file_exists( $this->error_log_file ) ) {
-			@unlink( $this->error_log_file );
+			wp_delete_file( $this->error_log_file );
 		}
 		if ( null !== $this->original_error_log ) {
-			ini_set( 'error_log', $this->original_error_log );
+			ini_set( 'error_log', $this->original_error_log ); // phpcs:ignore WordPress.PHP.IniSet.Risky -- restoring the original error_log target captured in setUp().
 		}
 
 		unset( $GLOBALS['test_ec_send_email_result'], $GLOBALS['test_ec_send_email_last_args'] );
@@ -93,11 +114,11 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 	 * pre_wp_mail filter callback — captures the call and short-circuits
 	 * wp_mail() so no real mail is sent.
 	 *
-	 * @param mixed $return Filter return; non-null short-circuits wp_mail().
-	 * @param array $atts   wp_mail() arguments.
+	 * @param mixed $pre_mail Filter return; non-null short-circuits wp_mail().
+	 * @param array $atts     wp_mail() arguments.
 	 * @return bool Always true to indicate "mail sent" without sending.
 	 */
-	public static function capture_wp_mail( $return, $atts ) {
+	public static function capture_wp_mail( $pre_mail, $atts ) {
 		self::$captured_wp_mail[] = $atts;
 		return true;
 	}
@@ -107,7 +128,7 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 	 */
 	private function read_error_log(): string {
 		return $this->error_log_file && file_exists( $this->error_log_file )
-			? (string) file_get_contents( $this->error_log_file )
+			? (string) file_get_contents( $this->error_log_file ) // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- reading a local temp log file; wp_remote_get() is for remote URLs.
 			: '';
 	}
 

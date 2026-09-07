@@ -84,7 +84,14 @@ class Test_Core_Signup_Surface extends WP_UnitTestCase {
 		$_SERVER['REQUEST_METHOD'] = 'GET';
 		$registration_setting      = get_site_option( 'registration' );
 		$redirect_filter           = static function ( $location, $status ) {
-			throw new RuntimeException( wp_json_encode( compact( 'location', 'status' ) ) );
+			throw new RuntimeException(
+				wp_json_encode(
+					array(
+						'location' => $location,
+						'status'   => $status,
+					)
+				)
+			);
 		};
 		add_filter( 'wp_redirect', $redirect_filter, 10, 2 );
 

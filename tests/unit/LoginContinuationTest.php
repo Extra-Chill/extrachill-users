@@ -21,7 +21,7 @@ class Test_Login_Continuation extends WP_UnitTestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$this->original_server = $_SERVER;
-		$this->original_get    = $_GET;
+		$this->original_get    = $_GET; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- unit test snapshots the request superglobals; no form data is processed.
 		require_once dirname( __DIR__, 2 ) . '/inc/oauth/google-canonical-origin.php';
 	}
 
@@ -173,12 +173,7 @@ class Test_Login_Continuation extends WP_UnitTestCase {
 			$this->markTestSkipped( 'Test requires the isolated Two_Factor_Core stub.' );
 		}
 
-		eval(
-			'class Two_Factor_Core {' .
-			'public static function is_user_using_two_factor( $user_id ) { return true; }' .
-			'public static function create_login_nonce( $user_id ) { return array( "key" => "test-2fa-nonce" ); }' .
-			'}'
-		);
+		require_once __DIR__ . '/support/class-two-factor-core-stub.php';
 
 		$password     = 'valid-password';
 		$user_id      = self::factory()->user->create( array( 'user_pass' => $password ) );

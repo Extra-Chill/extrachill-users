@@ -205,8 +205,8 @@ class Test_Team_Role extends WP_UnitTestCase {
 		$this->assertSame( 1, $summary['granted'] );
 		$this->assertSame( 1, $summary['meta_deleted'] );
 
-		$this->assertTrue( user_can( $team_user_id, 'access_studio' ) );
-		$this->assertFalse( user_can( $non_team_user_id, 'access_studio' ) );
+		$this->assertTrue( user_can( $team_user_id, 'access_studio' ) ); // phpcs:ignore WordPress.WP.Capabilities.Unknown -- 'access_studio' is a custom capability registered by this plugin via ec_users_register_team_role() (inc/team-members/role.php).
+		$this->assertFalse( user_can( $non_team_user_id, 'access_studio' ) ); // phpcs:ignore WordPress.WP.Capabilities.Unknown -- 'access_studio' is a custom capability registered by this plugin via ec_users_register_team_role() (inc/team-members/role.php).
 	}
 
 	public function test_migration_honors_manual_override_add(): void {
@@ -219,7 +219,7 @@ class Test_Team_Role extends WP_UnitTestCase {
 		ec_users_migrate_team_meta_to_role();
 
 		$this->assertTrue(
-			user_can( $user_id, 'access_studio' ),
+			user_can( $user_id, 'access_studio' ), // phpcs:ignore WordPress.WP.Capabilities.Unknown -- 'access_studio' is a custom capability registered by this plugin via ec_users_register_team_role() (inc/team-members/role.php).
 			'manual_override=add must grant the role even when the flag is 0.'
 		);
 	}
@@ -234,7 +234,7 @@ class Test_Team_Role extends WP_UnitTestCase {
 		ec_users_migrate_team_meta_to_role();
 
 		$this->assertFalse(
-			user_can( $user_id, 'access_studio' ),
+			user_can( $user_id, 'access_studio' ), // phpcs:ignore WordPress.WP.Capabilities.Unknown -- 'access_studio' is a custom capability registered by this plugin via ec_users_register_team_role() (inc/team-members/role.php).
 			'manual_override=remove must NOT grant the role even when the flag is 1.'
 		);
 	}
@@ -266,7 +266,7 @@ class Test_Team_Role extends WP_UnitTestCase {
 		$this->assertSame( 0, $second['meta_deleted'] );
 
 		// Role assignment from the first pass is preserved.
-		$this->assertTrue( user_can( $user_id, 'access_studio' ) );
+		$this->assertTrue( user_can( $user_id, 'access_studio' ) ); // phpcs:ignore WordPress.WP.Capabilities.Unknown -- 'access_studio' is a custom capability registered by this plugin via ec_users_register_team_role() (inc/team-members/role.php).
 	}
 
 	// -----------------------------------------------------------------

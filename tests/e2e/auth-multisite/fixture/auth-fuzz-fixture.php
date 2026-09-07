@@ -87,12 +87,12 @@ add_action(
 add_action(
 	'template_redirect',
 	static function () {
-		if ( ! isset( $_GET['auth_fuzz_observe'] ) ) {
+		if ( ! isset( $_GET['auth_fuzz_observe'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- unauthenticated observation endpoint for the e2e browser harness; it only records cookie state.
 			return;
 		}
-		$key                  = sanitize_key( wp_unslash( $_GET['auth_fuzz_observe'] ) );
+		$key                  = sanitize_key( wp_unslash( $_GET['auth_fuzz_observe'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- unauthenticated observation endpoint for the e2e browser harness; it only records cookie state.
 		$observations         = get_site_option( 'extrachill_auth_fuzz_browser_observations', array() );
-		$cookie               = isset( $_COOKIE[ LOGGED_IN_COOKIE ] ) ? (string) $_COOKIE[ LOGGED_IN_COOKIE ] : '';
+		$cookie               = isset( $_COOKIE[ LOGGED_IN_COOKIE ] ) ? (string) $_COOKIE[ LOGGED_IN_COOKIE ] : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- reads the logged-in cookie for observation only; no mutation.
 		$observations[ $key ] = array(
 			'user_id'     => get_current_user_id(),
 			'cookie_hash' => '' !== $cookie ? hash( 'sha256', $cookie ) : '',

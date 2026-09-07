@@ -33,6 +33,7 @@ class Test_Concert_History_Visibility extends WP_UnitTestCase {
 
 		// Mirror the Events-owned date table columns used by the public readers.
 		$wpdb->query(
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- DDL cannot use prepare() placeholders; the table name comes from $wpdb->get_blog_prefix() plus a fixed suffix.
 			"CREATE TABLE {$this->dates_table} (
 				post_id BIGINT UNSIGNED NOT NULL,
 				start_datetime DATETIME NOT NULL,

@@ -405,8 +405,8 @@ class Test_User_Settings_Default_Event_Location extends WP_UnitTestCase {
 		delete_user_meta( $user_id, EXTRACHILL_USERS_CONCERT_HISTORY_VISIBILITY_META_KEY );
 		delete_user_meta( $user_id, EXTRACHILL_USERS_EVENT_ATTENDANCE_VISIBILITY_META_KEY );
 		$transitions = array();
-		$listener    = static function ( int $changed_user_id, string $setting, string $old, string $new ) use ( &$transitions ): void {
-			$transitions[] = array( $changed_user_id, $setting, $old, $new );
+		$listener    = static function ( int $changed_user_id, string $setting, string $old, string $new_value ) use ( &$transitions ): void {
+			$transitions[] = array( $changed_user_id, $setting, $old, $new_value );
 		};
 		add_action( 'extrachill_users_visibility_changed', $listener, 10, 4 );
 

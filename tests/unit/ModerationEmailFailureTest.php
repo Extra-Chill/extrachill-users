@@ -12,11 +12,15 @@ class Test_Moderation_Email_Failure extends WP_UnitTestCase {
 		parent::setUp();
 
 		if ( ! function_exists( 'ec_send_email_queued' ) ) {
-			eval(
-				'function ec_send_email_queued( array $args ) {' .
-				'    return $GLOBALS["test_ec_send_email_queued_result"] ?? array( "success" => true );' .
-				'}'
-			);
+			/**
+			 * Test double: returns the globally configured queue result.
+			 *
+			 * @param array<string,mixed> $args Email arguments.
+			 * @return array<string,mixed>
+			 */
+			function ec_send_email_queued( array $args ) {
+				return $GLOBALS['test_ec_send_email_queued_result'] ?? array( 'success' => true );
+			}
 		}
 
 		require_once dirname( __DIR__, 2 ) . '/inc/core/moderation/email.php';

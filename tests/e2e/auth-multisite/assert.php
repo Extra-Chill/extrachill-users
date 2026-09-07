@@ -9,7 +9,7 @@ $_SERVER['REMOTE_ADDR'] = '127.0.0.249';
 function auth_fuzz_assert( $condition, string $message ): void {
 	global $passes;
 	if ( ! $condition ) {
-		throw new RuntimeException( $message );
+		throw new RuntimeException( $message ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- standalone e2e harness error message, not web output.
 	}
 	++$passes;
 }
@@ -272,4 +272,4 @@ $alias_bypass = auth_fuzz_rest( '/extrachill/v1/auth/login', array(
 auth_fuzz_assert( $alias_bypass->get_status() >= 400, 'Rate limit was bypassed through the account email alias.' );
 
 update_site_option( 'extrachill_auth_fuzz_backend_created_id', $created_id );
-printf( "Auth fuzz backend passed (%d assertions, seed %s).\n", $passes, $plan['seed'] );
+printf( "Auth fuzz backend passed (%d assertions, seed %s).\n", $passes, $plan['seed'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CLI harness progress output, not web output.

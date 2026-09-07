@@ -29,7 +29,7 @@ function auth_fuzz_ensure_page( string $slug, string $title, string $content ): 
 		true
 	);
 	if ( is_wp_error( $result ) || ! $result ) {
-		throw new RuntimeException( 'Could not create the ' . $slug . ' fixture page.' );
+		throw new RuntimeException( 'Could not create the ' . $slug . ' fixture page.' ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- standalone e2e harness error message, not web output.
 	}
 }
 

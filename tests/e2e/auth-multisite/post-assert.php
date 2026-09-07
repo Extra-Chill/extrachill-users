@@ -6,7 +6,7 @@ $browser_user = get_user_by( 'email', $plan['browser_email'] ?? '' );
 if ( ! $browser_user ) {
 	throw new RuntimeException( 'Browser registration did not create its network user.' );
 }
-if ( $browser_user->user_login !== ( $plan['browser_username'] ?? '' ) ) {
+if ( ( $plan['browser_username'] ?? '' ) !== $browser_user->user_login ) {
 	throw new RuntimeException( 'Browser onboarding did not persist the generated username.' );
 }
 if ( '1' !== (string) get_user_meta( $browser_user->ID, 'onboarding_completed', true ) ) {
@@ -26,15 +26,15 @@ foreach ( array( 'artist', 'events' ) as $surface ) {
 		throw new RuntimeException(
 			sprintf(
 				'Browser session did not survive on %s (cookie_match=%s).',
-				$surface,
-				hash_equals( (string) ( $emitted['hash'] ?? '' ), (string) ( $observation['cookie_hash'] ?? '' ) ) ? 'yes' : 'no'
+				$surface, // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- standalone e2e harness error message, not web output.
+				hash_equals( (string) ( $emitted['hash'] ?? '' ), (string) ( $observation['cookie_hash'] ?? '' ) ) ? 'yes' : 'no' // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- standalone e2e harness error message, not web output.
 			)
 		);
 	}
 }
 global $wpdb;
 $table             = function_exists( 'extrachill_analytics_events_table' ) ? extrachill_analytics_events_table() : $wpdb->base_prefix . 'extrachill_analytics_events';
-$registration_rows = $wpdb->get_col( $wpdb->prepare( "SELECT event_data FROM {$table} WHERE event_type = %s", 'user_registration' ) );
+$registration_rows = $wpdb->get_col( $wpdb->prepare( "SELECT event_data FROM {$table} WHERE event_type = %s", 'user_registration' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table names cannot be prepare() placeholders; $table comes from the analytics table helper.
 $registrations     = count(
 	array_filter(
 		$registration_rows,
@@ -44,8 +44,8 @@ $registrations     = count(
 		}
 	)
 );
-$completions       = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = %s AND user_id = %d", 'onboarding_completed', $browser_user->ID ) );
+$completions       = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = %s AND user_id = %d", 'onboarding_completed', $browser_user->ID ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table names cannot be prepare() placeholders; $table comes from the analytics table helper.
 if ( 1 !== $registrations || 1 !== $completions ) {
-	throw new RuntimeException( sprintf( 'Expected one registration and completion event; got %d/%d.', $registrations, $completions ) );
+	throw new RuntimeException( sprintf( 'Expected one registration and completion event; got %d/%d.', $registrations, $completions ) ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- standalone e2e harness error message, not web output.
 }
-printf( "Auth fuzz browser mutation passed for user %d.\n", $browser_user->ID );
+printf( "Auth fuzz browser mutation passed for user %d.\n", $browser_user->ID ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CLI harness progress output, not web output.

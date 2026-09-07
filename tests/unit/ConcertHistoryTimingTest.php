@@ -34,6 +34,7 @@ class Test_Concert_History_Timing extends WP_UnitTestCase {
 
 		extrachill_users_install_concert_tracking_table();
 		$wpdb->query(
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- DDL cannot use prepare() placeholders; the table name comes from $wpdb->get_blog_prefix() plus a fixed suffix.
 			"CREATE TABLE {$this->dates_table} (
 				post_id BIGINT UNSIGNED NOT NULL,
 				start_datetime DATETIME NOT NULL,

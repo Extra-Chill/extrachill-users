@@ -14,15 +14,15 @@ foreach ( array(
 	'placeholder-six'  => 6,
 	'events'           => 7,
 ) as $key => $expected ) {
-	$path     = '/' . $key . '/';
-	$existing = get_sites( array(
+	$site_path = '/' . $key . '/';
+	$existing  = get_sites( array(
 		'domain' => $host,
-		'path'   => $path,
+		'path'   => $site_path,
 		'number' => 1,
 	) );
-	$site_id  = $existing ? (int) $existing[0]->blog_id : wpmu_create_blog( $host, $path, 'Auth Fuzz ' . ucfirst( $key ), 1 );
+	$site_id   = $existing ? (int) $existing[0]->blog_id : wpmu_create_blog( $host, $site_path, 'Auth Fuzz ' . ucfirst( $key ), 1 );
 	if ( is_wp_error( $site_id ) || (int) $site_id !== $expected ) {
-		throw new RuntimeException( sprintf( 'Expected %s blog ID %d.', $key, $expected ) );
+		throw new RuntimeException( sprintf( 'Expected %s blog ID %d.', $key, $expected ) ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- standalone e2e harness error message, not web output.
 	}
 	if ( in_array( $key, array( 'community', 'artist', 'events' ), true ) ) {
 		$sites[ $key ] = (int) $site_id;
