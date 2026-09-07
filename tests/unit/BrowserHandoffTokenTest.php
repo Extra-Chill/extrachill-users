@@ -51,6 +51,14 @@ class Browser_Handoff_Test_Cache {
 		unset( $this->data[ $id ] );
 		return true;
 	}
+
+	/**
+	 * switch_to_blog() routes through wp_cache_switch_to_blog(); the stub cache
+	 * must implement the object-cache API surface the call chain touches.
+	 */
+	public function switch_to_blog( $blog_id ): bool {
+		return true;
+	}
 }
 
 class Test_Browser_Handoff_Token extends WP_UnitTestCase {

@@ -36,6 +36,19 @@ class Test_Artist_Membership_Authorization extends WP_UnitTestCase {
 		);
 		restore_current_blog();
 
+		if ( is_wp_error( $artist_id ) ) {
+			self::fail(
+				sprintf(
+					'create_artist fixture failed on blog %d (type %s, status %s): %s — %s',
+					$this->artist_blog_id,
+					$type,
+					$status,
+					$artist_id->get_error_code(),
+					$artist_id->get_error_message()
+				)
+			);
+		}
+
 		return $artist_id;
 	}
 

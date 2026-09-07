@@ -17,10 +17,18 @@ class Test_Artist_Access_Abilities extends WP_UnitTestCase {
 		parent::setUp();
 		require_once dirname( __DIR__, 2 ) . '/inc/core/abilities/artist-access.php';
 
+		// wp_register_ability() only registers inside the wp_abilities_api_init
+		// action (WP 6.9 contract); simulate it as WordPress core's own
+		// abilities-api tests do.
+		global $wp_current_filter;
 		foreach ( $this->ability_names() as $ability_name ) {
-			wp_unregister_ability( $ability_name );
+			if ( wp_has_ability( $ability_name ) ) {
+				wp_unregister_ability( $ability_name );
+			}
 		}
+		$wp_current_filter[] = 'wp_abilities_api_init';
 		extrachill_users_register_artist_access_abilities();
+		array_pop( $wp_current_filter );
 		wp_set_current_user( 0 );
 	}
 
