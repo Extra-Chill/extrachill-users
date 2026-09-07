@@ -62,6 +62,7 @@ jobs:
           sudo systemctl disable mariadb || true
 
       - name: Run Homeboy ${{ matrix.command }}
+        id: homeboy
         uses: Extra-Chill/homeboy-action@v2
         with:
           commands: ${{ matrix.command }}
@@ -70,3 +71,22 @@ jobs:
 
           app-token: ${{ steps.app-token.outputs.token || github.token }}
           differential-gating: 'true'
+
+      - name: Native MariaDB readiness inside the Homeboy exec env (diagnostic)
+        if: failure() && matrix.command == 'review test'
+        env:
+          DIAG: |
+            set -x
+            id; umask; ulimit -a
+            echo "TMPDIR=$TMPDIR HOMEBOY_RUNTIME_TMPDIR=$HOMEBOY_RUNTIME_TMPDIR"
+            df -hT "${TMPDIR:-/tmp}" /tmp "$HOME"
+            mount | grep -E " (/tmp|/home|$TMPDIR) " || true
+            cat /proc/self/status | grep -E "^(Cap|NoNewPrivs|Seccomp)"
+            ls -la /dev/fuse
+            node "$HOMEBOY_WP_CODEBOX_BIN" runtime descriptor --json | jq '{capabilities, runtimeServices}'
+        run: |
+          printf '%s' "$DIAG" > /tmp/diag.sh
+          homeboy extension exec wordpress -- bash /tmp/diag.sh 2>&1 | tail -80 || true
+          echo "===== plain shell for comparison ====="
+          export HOMEBOY_WP_CODEBOX_BIN="$HOME/.cache/homeboy/wp-codebox/source/packages/cli/dist/index.js"
+          bash /tmp/diag.sh 2>&1 | tail -40 || true
