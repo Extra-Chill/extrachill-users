@@ -38,6 +38,17 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 	protected function setUp(): void {
 		parent::setUp();
 
+		// The welcome templates resolve community/events/artist URLs through
+		// the canonical site map; the sandbox provisions those site rows
+		// without initializing them, and the resulting wpdb table-missing
+		// errors would pollute the error_log capture under assertion. Ensure
+		// initialization (a no-op for initialized sites).
+		foreach ( ec_get_blog_ids() as $mapped_blog_id ) {
+			if ( get_blog_details( $mapped_blog_id ) ) {
+				wp_initialize_site( $mapped_blog_id );
+			}
+		}
+
 		// Capture error_log() output to a per-test temp file.
 		$this->error_log_file     = tempnam( sys_get_temp_dir(), 'ec_users_test_log_' );
 		$this->original_error_log = ini_get( 'error_log' );
@@ -311,6 +322,6 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 		extrachill_log_email_failure( 'unit_test', 42, 'someone@example.com', 'Test Subject', null );
 
 		$log = $this->read_error_log();
-		$this->assertStringContainsString( 'unknown error', $log );
+		$this->assertStringContainsString( 'ec_send_email returned null', $log );
 	}
 }

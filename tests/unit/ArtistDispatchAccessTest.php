@@ -41,8 +41,14 @@ class Test_Artist_Dispatch_Access extends WP_UnitTestCase {
 
 	protected function tearDown(): void {
 		delete_site_option( EC_USERS_ARTIST_DISPATCH_POLICY_OPTION );
-		if ( $this->registered_fake_analytics ) {
+		if ( $this->registered_fake_analytics && wp_has_ability( 'extrachill/track-analytics-event' ) ) {
 			wp_unregister_ability( 'extrachill/track-analytics-event' );
+		}
+		if ( function_exists( 'extrachill_analytics_register_abilities' ) ) {
+			global $wp_current_filter;
+			$wp_current_filter[] = 'wp_abilities_api_init';
+			extrachill_analytics_register_abilities();
+			array_pop( $wp_current_filter );
 		}
 		unset( $GLOBALS['ec_artist_dispatch_test_analytics'] );
 		wp_set_current_user( 0 );
@@ -81,10 +87,17 @@ class Test_Artist_Dispatch_Access extends WP_UnitTestCase {
 				define( $constant, $value );
 			}
 		}
+		// Deterministically swap the real extrachill-analytics ability (it is a
+		// validation dependency and registers during boot) for the capture
+		// double, restoring it in tearDown. Registration must happen inside the
+		// wp_abilities_api_init action (WP 6.9 contract); simulate it the same
+		// way WordPress core's own abilities-api tests do.
 		if ( wp_has_ability( 'extrachill/track-analytics-event' ) ) {
-			return;
+			wp_unregister_ability( 'extrachill/track-analytics-event' );
 		}
-		wp_register_ability(
+		global $wp_current_filter;
+		$wp_current_filter[] = 'wp_abilities_api_init';
+		$this->registered_fake_analytics = null !== wp_register_ability(
 			'extrachill/track-analytics-event',
 			array(
 				'label'               => 'Test analytics',
@@ -99,7 +112,7 @@ class Test_Artist_Dispatch_Access extends WP_UnitTestCase {
 				},
 			)
 		);
-		$this->registered_fake_analytics = true;
+		array_pop( $wp_current_filter );
 	}
 
 	private function create_eligible_user(): array {

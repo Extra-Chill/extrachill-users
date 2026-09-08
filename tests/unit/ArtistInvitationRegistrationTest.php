@@ -11,6 +11,28 @@
 class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 	// phpcs:disable Squiz.Commenting.FunctionComment.Missing
 
+	protected function setUp(): void {
+		parent::setUp();
+
+		// Token registration mints auth tokens via the wp-native-auth
+		// primitives, which are network-activated in production but absent in
+		// the unit-test sandbox. Stub them once, in-process.
+		if ( ! function_exists( 'wp_native_auth_generate_access_token' ) ) {
+			eval(
+				'function wp_native_auth_generate_access_token( $user_id, $device_id ) {' .
+				'    return array( "token" => "test-access-token", "expires_at" => time() + HOUR_IN_SECONDS );' .
+				'}'
+			);
+		}
+		if ( ! function_exists( 'wp_native_auth_issue_refresh_token' ) ) {
+			eval(
+				'function wp_native_auth_issue_refresh_token( $user_id, $device_id, $device_name = "" ) {' .
+				'    return array( "token" => "test-refresh-token", "expires_at" => time() + DAY_IN_SECONDS );' .
+				'}'
+			);
+		}
+	}
+
 	protected function tearDown(): void {
 		unset( $_SERVER['HTTP_EXTRACHILL_CLIENT'] );
 		remove_all_filters( 'pre_http_request' );

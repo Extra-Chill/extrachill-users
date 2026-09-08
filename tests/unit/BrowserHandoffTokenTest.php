@@ -61,8 +61,8 @@ class Browser_Handoff_Test_Cache {
 	}
 
 	/**
-	 * Core group operations (e.g. get_multiple in WP 6.1+ cache API) may be
-	 * reached through the same call chain.
+	 * Core group operations (get_multiple/delete_multiple in the WP 6.1+ cache
+	 * API) may be reached through the same call chain.
 	 *
 	 * @param array  $keys  Cache keys.
 	 * @param string $group Cache group.
@@ -77,6 +77,19 @@ class Browser_Handoff_Test_Cache {
 			}
 		}
 		return $found;
+	}
+
+	/**
+	 * @param array  $keys  Cache keys.
+	 * @param string $group Cache group.
+	 * @return bool[]
+	 */
+	public function delete_multiple( $keys, $group = 'default' ): array {
+		$deleted = array();
+		foreach ( (array) $keys as $key ) {
+			$deleted[ $key ] = $this->delete( $key, $group );
+		}
+		return $deleted;
 	}
 }
 
