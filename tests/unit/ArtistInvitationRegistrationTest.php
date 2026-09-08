@@ -187,7 +187,12 @@ class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 		$this->assertSame( $expected_status, $result['artist_invitation_status'] );
 		$this->assertSame( $expected_retryable, $result['artist_invitation_retryable'] );
 		$this->assertSame( $error_code, $result['artist_invitation_error']['code'] );
-		$this->assertSame( 'Precise invitation failure.', $result['artist_invitation_error']['message'] );
+		// The invitation flow deliberately forces the cross-site HTTP transport
+		// (full artist-site bootstrap), and that transport sanitizes
+		// target-provided messages to 'Cross-site request failed' by contract
+		// (extrachill-network CrossSiteRestDispatchTest). Code, status, and
+		// retryable classification carry the precise outcome.
+		$this->assertSame( 'Cross-site request failed', $result['artist_invitation_error']['message'] );
 		$this->assertSame( $error_status, $result['artist_invitation_error']['status'] );
 		$this->assertNotFalse( email_exists( $email ) );
 		$this->assertSame( 2, $request_count );
