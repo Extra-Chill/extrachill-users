@@ -91,6 +91,20 @@ class Browser_Handoff_Test_Cache {
 		}
 		return $deleted;
 	}
+
+	/**
+	 * @param string $group Cache group.
+	 * @return bool
+	 */
+	public function flush_group( $group = 'default' ): bool {
+		$prefix = $group . ':';
+		foreach ( array_keys( $this->data ) as $id ) {
+			if ( str_starts_with( (string) $id, $prefix ) ) {
+				unset( $this->data[ $id ] );
+			}
+		}
+		return true;
+	}
 }
 
 class Test_Browser_Handoff_Token extends WP_UnitTestCase {
