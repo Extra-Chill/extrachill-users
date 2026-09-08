@@ -41,11 +41,8 @@ function ec_icon( string $name, string $css_class = '' ): string {}
  */
 function ec_send_email( array $args ): array {}
 
-/**
- * @param array<string,mixed> $args
- * @return array<string,mixed>
- */
-function ec_send_email_queued( array $args ): array {}
+/** @param array<string,mixed> $args */
+function ec_send_email_queued( array $args ): array|\WP_Error {}
 
 /** @return array{token:string,expires_at:int} */
 function wp_native_auth_generate_access_token( int $user_id, string $device_id ): array {}
