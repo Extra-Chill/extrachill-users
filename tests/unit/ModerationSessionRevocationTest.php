@@ -58,6 +58,10 @@ class Test_Moderation_Session_Revocation extends WP_UnitTestCase {
 			$this->markTestSkipped( 'The canonical artist site is unavailable.' );
 		}
 
+		// The sandbox provisions the canonical site rows without initializing
+		// them; ensure the tables exist before creating fixtures on the site.
+		wp_initialize_site( $artist_blog_id );
+
 		switch_to_blog( $artist_blog_id );
 		register_post_type( 'artist_profile', array( 'public' => true ) );
 		register_post_type( 'artist_link_page', array( 'public' => true ) );

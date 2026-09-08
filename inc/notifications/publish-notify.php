@@ -338,13 +338,30 @@ function ec_users_publish_notify_queue_email( \WP_User $user, string $subject, s
 				'preheader'      => __( 'Your Extra Chill submission is live.', 'extrachill-users' ),
 			),
 		);
-		$queue      = static function () use ( $queue_args ) {
-			return ec_send_email_queued( $queue_args );
-		};
-		$helper     = '\\DataMachine\\Abilities\\PermissionHelper';
-		$result     = class_exists( $helper )
-			? $helper::run_as_authenticated( $queue )
-			: $queue();
+
+		/**
+		 * Short-circuit the publish-notification email queue.
+		 *
+		 * Return a non-null value to bypass ec_send_email_queued() and use the
+		 * returned value as the queue result. Tests use this to substitute a
+		 * deterministic transport because PHPUnit process isolation is
+		 * unavailable in the managed CI sandbox.
+		 *
+		 * @param mixed $pre        Short-circuit queue result (array|false|null). Null to continue.
+		 * @param array $queue_args Arguments about to be forwarded to ec_send_email_queued().
+		 */
+		$pre = apply_filters( 'extrachill_users_pre_queue_publish_email', null, $queue_args );
+		if ( null !== $pre ) {
+			$result = $pre;
+		} else {
+			$queue  = static function () use ( $queue_args ) {
+				return ec_send_email_queued( $queue_args );
+			};
+			$helper = '\\DataMachine\\Abilities\\PermissionHelper';
+			$result = class_exists( $helper )
+				? $helper::run_as_authenticated( $queue )
+				: $queue();
+		}
 	} catch ( \Throwable $exception ) {
 		error_log( sprintf( 'ec_users_publish_notify: email queue exception for user %1$d: %2$s', $user->ID, $exception->getMessage() ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Canonical operational logging surface.
 		return false;

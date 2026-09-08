@@ -20,6 +20,11 @@ class Test_Artist_Membership_Authorization extends WP_UnitTestCase {
 			self::factory()->blog->create();
 		}
 
+		// The sandbox provisions the canonical site rows without initializing
+		// them; wp_initialize_site() creates the missing tables and is a no-op
+		// (with an error return) for already-initialized sites.
+		wp_initialize_site( $this->artist_blog_id );
+
 		switch_to_blog( $this->artist_blog_id );
 		register_post_type( 'artist_profile', array( 'public' => true ) );
 		restore_current_blog();

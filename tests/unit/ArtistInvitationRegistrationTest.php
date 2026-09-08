@@ -177,8 +177,10 @@ class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 		return '__return_true';
 	}
 
-	public function admit_registration(): bool {
-		return true;
+	public function admit_registration(): callable {
+		// The extrachill_users_registration_admitter filter replaces the
+		// admitter callable; return an admitting callable, not a verdict.
+		return '__return_true';
 	}
 
 	private function assert_browser_invitation_outcome( string $error_code, int $error_status, string $expected_status, bool $expected_retryable ): void {
