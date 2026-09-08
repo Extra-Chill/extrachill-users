@@ -158,5 +158,5 @@ function extrachill_users_send_moderation_email( WP_User $user, array $status ) 
 	$pre    = apply_filters( 'extrachill_users_pre_send_moderation_email', null, $queue_args );
 	$result = null !== $pre ? $pre : ec_send_email_queued( $queue_args );
 
-	return is_array( $result ) && ! empty( $result['success'] );
+	return ! empty( $result['success'] );
 }
