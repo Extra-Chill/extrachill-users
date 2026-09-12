@@ -15,7 +15,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_welcome_email_ability' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_welcome_email_ability' );
 
 /**
  * Register the send-welcome-email ability.

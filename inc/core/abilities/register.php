@@ -3,7 +3,7 @@
  * Abilities Registration
  *
  * Registers the extrachill-users ability category and loads all ability files.
- * Each file registers its own abilities on the wp_abilities_api_init hook.
+ * Each file registers its own abilities on the wp_abilities_api_init lifecycle.
  *
  * @package ExtraChill\Users
  * @since 0.7.0
@@ -11,7 +11,9 @@
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_categories_init', 'extrachill_users_register_category' );
+require_once __DIR__ . '/registration-lifecycle.php';
+
+extrachill_users_on_abilities_api_categories_init( 'extrachill_users_register_category' );
 
 /**
  * Resolve the authenticated user for self-only abilities.

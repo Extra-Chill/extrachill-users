@@ -16,7 +16,9 @@ defined( 'ABSPATH' ) || exit;
  * @return int Event ID, or zero when analytics is unavailable.
  */
 function ec_users_emit_onboarding_event( string $event_type, int $user_id, array $extra = array() ): int {
-	$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( 'extrachill/track-analytics-event' ) : null;
+	$ability = function_exists( 'wp_has_ability' ) && wp_has_ability( 'extrachill/track-analytics-event' )
+		? wp_get_ability( 'extrachill/track-analytics-event' )
+		: null;
 	if ( ! $ability ) {
 		return 0;
 	}
@@ -63,7 +65,9 @@ function ec_users_emit_onboarding_artist_access_granted( int $user_id, bool $is_
 		return 0;
 	}
 
-	$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( 'extrachill/track-analytics-event' ) : null;
+	$ability = function_exists( 'wp_has_ability' ) && wp_has_ability( 'extrachill/track-analytics-event' )
+		? wp_get_ability( 'extrachill/track-analytics-event' )
+		: null;
 	if ( ! $ability ) {
 		return 0;
 	}

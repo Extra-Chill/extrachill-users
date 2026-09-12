@@ -63,6 +63,15 @@ All auth endpoints live in `extrachill-api` under `extrachill/v1`:
 - WordPress 5.0+
 - Requires: `extrachill-network`, `extrachill-api`
 
+### Concert Import Service Authority
+
+Cross-site concert imports require matching network-wide service assertion configuration before workers run:
+
+- `EXTRACHILL_USERS_CONCERT_IMPORT_SERVICE_ASSERTION_KEYS` — key ID to secret map; secrets must be at least 32 bytes.
+- `EXTRACHILL_USERS_CONCERT_IMPORT_SERVICE_ASSERTION_ACTIVE_KEY_ID` — key ID used to sign new requests.
+
+Provision matching keys on every network runtime before activating this import path. Missing or mismatched configuration fails closed.
+
 ## Development
 
 See [AGENTS.md](AGENTS.md) for technical implementation details.

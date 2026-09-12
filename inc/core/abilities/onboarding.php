@@ -15,7 +15,7 @@ defined( 'ABSPATH' ) || exit;
 
 const EC_USERS_ONBOARDING_ARTIST_GRANT_META = '_extrachill_onboarding_artist_grant';
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_onboarding_abilities' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_onboarding_abilities' );
 
 /**
  * Register onboarding abilities.

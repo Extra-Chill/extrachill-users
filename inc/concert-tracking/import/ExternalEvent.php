@@ -2,9 +2,8 @@
 /**
  * Normalized external event value object.
  *
- * Every ImportSource yields ExternalEvent instances; EventMatcher consumes
- * them. This is the shared shape across all adapters — no source-specific
- * shape leaks into the matcher or orchestrator.
+ * Every ImportSource yields ExternalEvent instances. This is the shared shape
+ * across all adapters; no source-specific shape leaks into the orchestrator.
  *
  * @package ExtraChill\Users\Concert_Import
  * @since 0.13.0
@@ -65,7 +64,7 @@ final class ExternalEvent {
 
 	/**
 	 * Stable source-side identifier (e.g. setlist.fm setlist ID or
-	 * phish.net showid). Used for logs + audit, not matching.
+	 * phish.net showid). Used by the canonical event upsert identity.
 	 *
 	 * @var string
 	 */

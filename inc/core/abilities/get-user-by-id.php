@@ -13,7 +13,7 @@ declare(strict_types=1);
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_get_user_by_id_ability' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_get_user_by_id_ability' );
 
 /**
  * Register the extrachill/get-user-by-id ability.
