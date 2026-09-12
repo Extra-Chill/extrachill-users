@@ -24,20 +24,6 @@ jobs:
       fail-fast: false
       matrix:
         command: [review lint, review test]
-    services:
-      mysql:
-        image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
-        env:
-          MYSQL_ROOT_PASSWORD: ''
-          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
-          MYSQL_DATABASE: homeboy_wptests
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=3
     steps:
       - uses: actions/checkout@v6
         with:
@@ -51,15 +37,56 @@ jobs:
           client-id: ${{ secrets.HOMEBOY_APP_ID }}
           private-key: ${{ secrets.HOMEBOY_APP_PRIVATE_KEY }}
 
+      # A harness change (component config or this workflow) is the one change a
+      # changed-scope run cannot evidence, so run the full suite when one is present.
+      - name: Resolve review scope
+        id: scope
+        if: matrix.command == 'review test'
+        run: |
+          scope=auto
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if git diff --name-only "${{ github.event.pull_request.base.sha }}...HEAD" \
+              | grep -qxE 'homeboy\.json|\.github/workflows/homeboy\.yml'; then
+              scope=full
+            fi
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+
+      - name: Install native MariaDB containment tools
+        if: matrix.command == 'review test'
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            mariadb-server mariadb-client fuse2fs fuse3 e2fsprogs util-linux
+          sudo systemctl stop mariadb || true
+          sudo systemctl disable mariadb || true
+
       - name: Run Homeboy ${{ matrix.command }}
-        env:
-          WP_CODEBOX_DB_HOST: 127.0.0.1
-          WP_CODEBOX_DB_PORT: '3306'
-          WP_CODEBOX_DB_USER: root
-          WP_CODEBOX_DB_PASSWORD: ''
+        id: homeboy
         uses: Extra-Chill/homeboy-action@v2
         with:
           commands: ${{ matrix.command }}
           expected-commands: review lint,review test
+          scope: ${{ matrix.command == 'review test' && steps.scope.outputs.scope || 'auto' }}
+
           app-token: ${{ steps.app-token.outputs.token || github.token }}
           differential-gating: 'true'
+
+      - name: Native MariaDB readiness inside the Homeboy exec env (diagnostic)
+        if: failure() && matrix.command == 'review test'
+        env:
+          DIAG: |
+            set -x
+            id; umask; ulimit -a
+            echo "TMPDIR=$TMPDIR HOMEBOY_RUNTIME_TMPDIR=$HOMEBOY_RUNTIME_TMPDIR"
+            df -hT "${TMPDIR:-/tmp}" /tmp "$HOME"
+            mount | grep -E " (/tmp|/home|$TMPDIR) " || true
+            cat /proc/self/status | grep -E "^(Cap|NoNewPrivs|Seccomp)"
+            ls -la /dev/fuse
+            node "$HOMEBOY_WP_CODEBOX_BIN" runtime descriptor --json | jq '{capabilities, runtimeServices}'
+        run: |
+          printf '%s' "$DIAG" > /tmp/diag.sh
+          homeboy extension exec wordpress -- bash /tmp/diag.sh 2>&1 | tail -80 || true
+          echo "===== plain shell for comparison ====="
+          export HOMEBOY_WP_CODEBOX_BIN="$HOME/.cache/homeboy/wp-codebox/source/packages/cli/dist/index.js"
+          bash /tmp/diag.sh 2>&1 | tail -40 || true
