@@ -51,6 +51,60 @@ class Browser_Handoff_Test_Cache {
 		unset( $this->data[ $id ] );
 		return true;
 	}
+
+	/**
+	 * switch_to_blog() routes through wp_cache_switch_to_blog(); the stub cache
+	 * must implement the object-cache API surface the call chain touches.
+	 */
+	public function switch_to_blog( $blog_id ): bool {
+		return true;
+	}
+
+	/**
+	 * Core group operations (get_multiple/delete_multiple in the WP 6.1+ cache
+	 * API) may be reached through the same call chain.
+	 *
+	 * @param array  $keys  Cache keys.
+	 * @param string $group Cache group.
+	 * @return array
+	 */
+	public function get_multiple( $keys, $group = 'default' ): array {
+		$found = array();
+		foreach ( (array) $keys as $key ) {
+			$value = $this->get( $key, $group );
+			if ( false !== $value ) {
+				$found[ $key ] = $value;
+			}
+		}
+		return $found;
+	}
+
+	/**
+	 * @param array  $keys  Cache keys.
+	 * @param string $group Cache group.
+	 * @return bool[]
+	 */
+	public function delete_multiple( $keys, $group = 'default' ): array {
+		$deleted = array();
+		foreach ( (array) $keys as $key ) {
+			$deleted[ $key ] = $this->delete( $key, $group );
+		}
+		return $deleted;
+	}
+
+	/**
+	 * @param string $group Cache group.
+	 * @return bool
+	 */
+	public function flush_group( $group = 'default' ): bool {
+		$prefix = $group . ':';
+		foreach ( array_keys( $this->data ) as $id ) {
+			if ( str_starts_with( (string) $id, $prefix ) ) {
+				unset( $this->data[ $id ] );
+			}
+		}
+		return true;
+	}
 }
 
 class Test_Browser_Handoff_Token extends WP_UnitTestCase {

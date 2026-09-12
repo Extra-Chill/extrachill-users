@@ -11,6 +11,28 @@
 class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 	// phpcs:disable Squiz.Commenting.FunctionComment.Missing
 
+	protected function setUp(): void {
+		parent::setUp();
+
+		// Token registration mints auth tokens via the wp-native-auth
+		// primitives, which are network-activated in production but absent in
+		// the unit-test sandbox. Stub them once, in-process.
+		if ( ! function_exists( 'wp_native_auth_generate_access_token' ) ) {
+			eval(
+				'function wp_native_auth_generate_access_token( $user_id, $device_id ) {' .
+				'    return array( "token" => "test-access-token", "expires_at" => time() + HOUR_IN_SECONDS );' .
+				'}'
+			);
+		}
+		if ( ! function_exists( 'wp_native_auth_issue_refresh_token' ) ) {
+			eval(
+				'function wp_native_auth_issue_refresh_token( $user_id, $device_id, $device_name = "" ) {' .
+				'    return array( "token" => "test-refresh-token", "expires_at" => time() + DAY_IN_SECONDS );' .
+				'}'
+			);
+		}
+	}
+
 	protected function tearDown(): void {
 		unset( $_SERVER['HTTP_EXTRACHILL_CLIENT'] );
 		remove_all_filters( 'pre_http_request' );
@@ -165,18 +187,27 @@ class Test_Artist_Invitation_Registration extends WP_UnitTestCase {
 		$this->assertSame( $expected_status, $result['artist_invitation_status'] );
 		$this->assertSame( $expected_retryable, $result['artist_invitation_retryable'] );
 		$this->assertSame( $error_code, $result['artist_invitation_error']['code'] );
-		$this->assertSame( 'Precise invitation failure.', $result['artist_invitation_error']['message'] );
+		// The invitation flow deliberately forces the cross-site HTTP transport
+		// (full artist-site bootstrap), and that transport sanitizes
+		// target-provided messages to 'Cross-site request failed' by contract
+		// (extrachill-network CrossSiteRestDispatchTest). Code, status, and
+		// retryable classification carry the precise outcome.
+		$this->assertSame( 'Cross-site request failed', $result['artist_invitation_error']['message'] );
 		$this->assertSame( $error_status, $result['artist_invitation_error']['status'] );
 		$this->assertNotFalse( email_exists( $email ) );
 		$this->assertSame( 2, $request_count );
 	}
 
-	public function pass_turnstile(): bool {
-		return true;
+	public function pass_turnstile(): callable {
+		// The extrachill_users_registration_turnstile_verifier filter replaces
+		// the verifier callable; return a passing verifier, not a verdict.
+		return '__return_true';
 	}
 
-	public function admit_registration(): bool {
-		return true;
+	public function admit_registration(): callable {
+		// The extrachill_users_registration_admitter filter replaces the
+		// admitter callable; return an admitting callable, not a verdict.
+		return '__return_true';
 	}
 
 	private function assert_browser_invitation_outcome( string $error_code, int $error_status, string $expected_status, bool $expected_retryable ): void {

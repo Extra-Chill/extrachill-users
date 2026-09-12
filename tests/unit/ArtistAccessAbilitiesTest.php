@@ -17,10 +17,18 @@ class Test_Artist_Access_Abilities extends WP_UnitTestCase {
 		parent::setUp();
 		require_once dirname( __DIR__, 2 ) . '/inc/core/abilities/artist-access.php';
 
+		// wp_register_ability() only registers inside the wp_abilities_api_init
+		// action (WP 6.9 contract); simulate it as WordPress core's own
+		// abilities-api tests do.
+		global $wp_current_filter;
 		foreach ( $this->ability_names() as $ability_name ) {
-			wp_unregister_ability( $ability_name );
+			if ( wp_has_ability( $ability_name ) ) {
+				wp_unregister_ability( $ability_name );
+			}
 		}
+		$wp_current_filter[] = 'wp_abilities_api_init';
 		extrachill_users_register_artist_access_abilities();
+		array_pop( $wp_current_filter );
 		wp_set_current_user( 0 );
 	}
 
@@ -48,14 +56,29 @@ class Test_Artist_Access_Abilities extends WP_UnitTestCase {
 
 	/**
 	 * Subscribers cannot execute any administrative ability.
+	 *
+	 * Input validation runs before the permission check inside
+	 * WP_Ability::execute(), so each ability receives its schema-valid minimal
+	 * input to prove the rejection happens at the permission layer.
 	 */
 	public function test_registered_administrative_abilities_deny_subscribers(): void {
+		$target_id = self::factory()->user->create();
+		update_user_meta( $target_id, 'artist_access_request', array( 'type' => 'artist' ) );
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
 
-		foreach ( array( 'list-artist-access-requests', 'approve-artist-access', 'reject-artist-access' ) as $name ) {
-			$result = wp_get_ability( 'extrachill/' . $name )->execute( array() );
-			$this->assertWPError( $result );
-			$this->assertSame( 'ability_invalid_permissions', $result->get_error_code() );
+		$inputs = array(
+			'list-artist-access-requests' => array(),
+			'approve-artist-access'       => array(
+				'user_id' => $target_id,
+				'type'    => 'artist',
+			),
+			'reject-artist-access'        => array( 'user_id' => $target_id ),
+		);
+
+		foreach ( $inputs as $name => $input ) {
+			$result = wp_get_ability( 'extrachill/' . $name )->execute( $input );
+			$this->assertWPError( $result, $name );
+			$this->assertSame( 'ability_invalid_permissions', $result->get_error_code(), $name );
 		}
 	}
 

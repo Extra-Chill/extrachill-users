@@ -14,6 +14,17 @@ class Test_Core_Signup_Surface extends WP_UnitTestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$this->original_server = $_SERVER;
+
+		// The sandbox provisions the primary site's options with a different
+		// domain than the network rows (wp_safe_redirect then rejects the
+		// network home URL as cross-host and falls back to wp_guess_url).
+		// Align the primary site options with the network domain so the
+		// production relationship (network = primary site) holds under test.
+		$network_url = network_site_url();
+		if ( get_option( 'siteurl' ) !== $network_url ) {
+			update_option( 'siteurl', $network_url );
+			update_option( 'home', network_home_url() );
+		}
 	}
 
 	public function test_policy_is_attached_before_core_processes_signup(): void {

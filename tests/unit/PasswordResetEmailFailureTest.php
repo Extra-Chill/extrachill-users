@@ -15,12 +15,11 @@
  * (run_as_authenticated seam, same as #110) and guards the envelope with
  * is_wp_error()/is_array() before indexing.
  *
- * These tests run in separate processes so we can define our own
- * ec_send_email() stub (the real one lives in extrachill-network and is
- * unavailable in the unit-test bootstrap).
- *
- * @runTestsInSeparateProcesses
- * @preserveGlobalState disabled
+ * The transport is substituted through the
+ * extrachill_users_pre_send_registration_email filter seam rather than a
+ * function stub: PHPUnit process isolation is unavailable in the managed CI
+ * sandbox, and the real extrachill-network ec_send_email() cannot be
+ * redefined in-process.
  */
 
 class Test_Password_Reset_Email_Failure extends WP_UnitTestCase {
@@ -43,30 +42,25 @@ class Test_Password_Reset_Email_Failure extends WP_UnitTestCase {
 		$this->original_error_log = ini_get( 'error_log' );
 		ini_set( 'error_log', $this->error_log_file );
 
-		// Load the SUT, the registration-email wrapper it routes through, and
-		// the canonical ec_send_email() stub. The stub return value is flipped
-		// via a global before exercising the SUT.
+		// Load the SUT and the registration-email wrapper it routes through,
+		// then substitute a deterministic transport on the filter seam.
 		require_once dirname( __DIR__, 2 ) . '/inc/core/registration-emails.php';
 		require_once dirname( __DIR__, 2 ) . '/inc/auth/password-reset.php';
 
-		if ( ! function_exists( 'ec_send_email' ) ) {
-			eval(
-				'function ec_send_email( array $args ) {' .
-				'    $GLOBALS["test_ec_send_email_last_args"] = $args;' .
-				'    if ( isset( $GLOBALS["test_ec_send_email_result"] ) ) {' .
-				'        return $GLOBALS["test_ec_send_email_result"];' .
-				'    }' .
-				'    return array( "success" => true );' .
-				'}'
-			);
-		}
-
-		if ( ! function_exists( 'ec_get_site_url' ) ) {
-			eval( 'function ec_get_site_url( $site ) { return "https://community.extrachill.com"; }' );
-		}
+		add_filter(
+			'extrachill_users_pre_send_registration_email',
+			static function ( $pre, array $args ) {
+				$GLOBALS['test_ec_send_email_last_args'] = $args;
+				return $GLOBALS['test_ec_send_email_result'] ?? array( 'success' => true );
+			},
+			10,
+			2
+		);
 	}
 
 	protected function tearDown(): void {
+		remove_all_filters( 'extrachill_users_pre_send_registration_email' );
+
 		if ( $this->error_log_file && file_exists( $this->error_log_file ) ) {
 			@unlink( $this->error_log_file );
 		}

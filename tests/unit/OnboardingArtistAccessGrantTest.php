@@ -18,6 +18,13 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 	private $registered_fake_analytics = false;
 
 	/**
+	 * Whether the real analytics ability was present and needs restoring.
+	 *
+	 * @var bool
+	 */
+	private $had_real_analytics_ability = false;
+
+	/**
 	 * Install a bounded analytics capture ability.
 	 */
 	protected function setUp(): void {
@@ -42,10 +49,21 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 		$locks                                  = &ec_users_onboarding_lock_registry();
 		$locks                                  = array();
 
-		if ( ! wp_has_ability( 'extrachill/track-analytics-event' ) ) {
-			wp_register_ability(
-				'extrachill/track-analytics-event',
-				array(
+		// Deterministically swap the real extrachill-analytics ability (registered
+		// during boot when the analytics plugin is a validation dependency) for
+		// the capture double. Registration must happen inside the
+		// wp_abilities_api_init action context (WP 6.9 contract), so simulate it
+		// the same way WordPress core's own abilities-api tests do.
+		$this->had_real_analytics_ability = wp_has_ability( 'extrachill/track-analytics-event' );
+		if ( $this->had_real_analytics_ability ) {
+			wp_unregister_ability( 'extrachill/track-analytics-event' );
+		}
+
+		global $wp_current_filter;
+		$wp_current_filter[] = 'wp_abilities_api_init';
+		$this->registered_fake_analytics = null !== wp_register_ability(
+			'extrachill/track-analytics-event',
+			array(
 					'label'               => 'Test analytics',
 					'description'         => 'Captures onboarding grant events.',
 					'category'            => 'extrachill-users',
@@ -56,13 +74,12 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 						if ( ! empty( $GLOBALS['ec_onboarding_grant_failure'] ) && EC_ANALYTICS_EVENT_ARTIST_ACCESS_GRANTED === $input['event_type'] ) {
 							return 0;
 						}
-						$GLOBALS['ec_onboarding_grant_events'][] = $input;
-						return count( $GLOBALS['ec_onboarding_grant_events'] );
-					},
-				)
-			);
-			$this->registered_fake_analytics = true;
-		}
+					$GLOBALS['ec_onboarding_grant_events'][] = $input;
+					return count( $GLOBALS['ec_onboarding_grant_events'] );
+				},
+			)
+		);
+		array_pop( $wp_current_filter );
 	}
 
 	/**
@@ -71,8 +88,14 @@ class Test_Onboarding_Artist_Access_Grant extends WP_UnitTestCase {
 	protected function tearDown(): void {
 		$locks = &ec_users_onboarding_lock_registry();
 		$locks = array();
-		if ( $this->registered_fake_analytics ) {
+		if ( $this->registered_fake_analytics && wp_has_ability( 'extrachill/track-analytics-event' ) ) {
 			wp_unregister_ability( 'extrachill/track-analytics-event' );
+		}
+		if ( $this->had_real_analytics_ability && function_exists( 'extrachill_analytics_register_abilities' ) ) {
+			global $wp_current_filter;
+			$wp_current_filter[] = 'wp_abilities_api_init';
+			extrachill_analytics_register_abilities();
+			array_pop( $wp_current_filter );
 		}
 		unset( $GLOBALS['ec_onboarding_grant_events'], $GLOBALS['ec_onboarding_grant_failure'] );
 		parent::tearDown();

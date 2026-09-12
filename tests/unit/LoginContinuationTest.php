@@ -164,21 +164,18 @@ class Test_Login_Continuation extends WP_UnitTestCase {
 	/**
 	 * The token login service must carry its validated destination into the
 	 * Two Factor plugin's challenge state.
-	 *
-	 * @runInSeparateProcess
-	 * @preserveGlobalState disabled
 	 */
 	public function test_two_factor_challenge_carries_the_validated_login_continuation(): void {
-		if ( class_exists( 'Two_Factor_Core' ) ) {
-			$this->markTestSkipped( 'Test requires the isolated Two_Factor_Core stub.' );
+		// Define the isolated Two_Factor_Core stub once; the class persists for
+		// the rest of the in-process run.
+		if ( ! class_exists( 'Two_Factor_Core' ) ) {
+			eval(
+				'class Two_Factor_Core {' .
+				'public static function is_user_using_two_factor( $user_id ) { return true; }' .
+				'public static function create_login_nonce( $user_id ) { return array( "key" => "test-2fa-nonce" ); }' .
+				'}'
+			);
 		}
-
-		eval(
-			'class Two_Factor_Core {' .
-			'public static function is_user_using_two_factor( $user_id ) { return true; }' .
-			'public static function create_login_nonce( $user_id ) { return array( "key" => "test-2fa-nonce" ); }' .
-			'}'
-		);
 
 		$password     = 'valid-password';
 		$user_id      = self::factory()->user->create( array( 'user_pass' => $password ) );

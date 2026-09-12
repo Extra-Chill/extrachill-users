@@ -99,6 +99,11 @@ class Test_Event_Creator extends WP_UnitTestCase {
 	}
 
 	public function test_create_writes_audit_meta_and_returns_post_id(): void {
+		// datamachine/upsert-post gates execution on Data Machine permission
+		// policy (chat → manage_options fallback); production reaches it through
+		// the Action Scheduler context, the test through an administrator.
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+
 		$event = new ExternalEvent(
 			array(
 				'date'       => '2024-06-15',
