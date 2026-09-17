@@ -77,6 +77,11 @@ function ec_users_get_team_role_caps() {
 
 		// --- Custom EC team-only caps ---
 		'access_studio'        => true,
+		// Retained deliberately after Roadie's retirement
+		// (Extra-Chill/extrachill-network#210). 44 accounts hold this and
+		// nothing grants it elsewhere, so dropping it as a side effect of
+		// removing the plugin risks silently revoking access somewhere that
+		// still checks it. Retiring the capability is its own decision.
 		'access_roadie'        => true,
 		'access_transcribe'    => true,
 		'access_events_admin'  => true,
