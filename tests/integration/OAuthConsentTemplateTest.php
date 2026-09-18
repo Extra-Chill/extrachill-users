@@ -21,17 +21,32 @@ class Test_OAuth_Consent_Template extends WP_UnitTestCase {
 	 * @param array<string,mixed> $overrides View args to merge.
 	 * @return string Rendered HTML.
 	 */
+	/**
+	 * Register the theme-owned handle the badges stylesheet depends on.
+	 *
+	 * The bare test theme does not provide it, so enqueuing during render
+	 * would raise an unregistered-dependency notice. Registering a stub is
+	 * better than declaring the notice: WP_Styles::add only fires once per
+	 * process, so a declaration would pass in whichever test rendered first
+	 * and fail in every one after it. See issue #401 for the underlying
+	 * coupling.
+	 */
+	public function set_up(): void {
+		parent::set_up();
+
+		if ( ! wp_style_is( 'extrachill-root', 'registered' ) ) {
+			wp_register_style( 'extrachill-root', false, array(), null );
+		}
+	}
+
 	private function render( array $overrides = array() ): string {
 		/*
-		 * The template renders full page chrome. Under the test theme that
-		 * emits notices which have nothing to do with the nonce action being
-		 * tested, so they are declared rather than silenced: the bare test
-		 * theme ships no header.php or footer.php, and the badges stylesheet
-		 * declares a dependency it never registers (tracked separately).
+		 * The template renders full page chrome, and the bare test theme
+		 * ships no header.php or footer.php. Those deprecations fire on every
+		 * call, so declaring them is stable regardless of test order.
 		 */
 		$this->setExpectedDeprecated( 'Theme without header.php' );
 		$this->setExpectedDeprecated( 'Theme without footer.php' );
-		$this->setExpectedIncorrectUsage( 'WP_Styles::add' );
 
 		$args = array_merge(
 			array(
