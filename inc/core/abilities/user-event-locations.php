@@ -9,7 +9,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_event_locations_ability' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_event_locations_ability' );
 
 /**
  * Register the public user event location discovery Ability.

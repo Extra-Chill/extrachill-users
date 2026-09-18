@@ -20,7 +20,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-add_action( 'wp_abilities_api_init', 'extrachill_users_register_team_experience_stats_ability' );
+extrachill_users_on_abilities_api_init( 'extrachill_users_register_team_experience_stats_ability' );
 
 /**
  * Register the get-team-experience-stats ability.

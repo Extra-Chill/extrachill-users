@@ -15,14 +15,14 @@ defined( 'ABSPATH' ) || exit;
 
 require_once __DIR__ . '/ExternalEvent.php';
 require_once __DIR__ . '/ImportSource.php';
-require_once __DIR__ . '/EventMatcher.php';
 require_once __DIR__ . '/ImportOrchestrator.php';
-require_once __DIR__ . '/EventCreator.php';
+require_once __DIR__ . '/CanonicalEventUpserter.php';
 require_once __DIR__ . '/Sources/SetlistFmImportSource.php';
 require_once __DIR__ . '/Sources/PhishNetImportSource.php';
 
 // Register the Action Scheduler worker hook.
 \ExtraChill\Users\Concert_Import\ImportOrchestrator::register_hooks();
+\ExtraChill\Users\Concert_Import\CanonicalEventUpserter::register_hooks();
 
 // Register each source's API key with Data Machine's encrypted auth provider
 // registry. This makes the credentials discoverable via
