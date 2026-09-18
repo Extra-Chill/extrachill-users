@@ -22,6 +22,17 @@ class Test_OAuth_Consent_Template extends WP_UnitTestCase {
 	 * @return string Rendered HTML.
 	 */
 	private function render( array $overrides = array() ): string {
+		/*
+		 * The template renders full page chrome. Under the test theme that
+		 * emits notices which have nothing to do with the nonce action being
+		 * tested, so they are declared rather than silenced: the bare test
+		 * theme ships no header.php or footer.php, and the badges stylesheet
+		 * declares a dependency it never registers (tracked separately).
+		 */
+		$this->setExpectedDeprecated( 'Theme without header.php' );
+		$this->setExpectedDeprecated( 'Theme without footer.php' );
+		$this->setExpectedIncorrectUsage( 'WP_Styles::add' );
+
 		$args = array_merge(
 			array(
 				'client_name'      => 'Test Client',
