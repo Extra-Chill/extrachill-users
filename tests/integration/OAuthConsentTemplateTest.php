@@ -10,26 +10,18 @@
  * reproduced against production before this test existed.
  *
  * The plugin's own tests did not catch it because they exercise the default
- * unbranded template; the breakage only exists for hosts that override it.
+ * unbranded template; the breakage only exists for hosts that override it,
+ * which is what the filter seam is for.
  */
 
 class Test_OAuth_Consent_Template extends WP_UnitTestCase {
 
 	/**
-	 * Render the branded template and return its markup.
-	 *
-	 * @param array<string,mixed> $overrides View args to merge.
-	 * @return string Rendered HTML.
-	 */
-	/**
 	 * Register the theme-owned handle the badges stylesheet depends on.
 	 *
 	 * The bare test theme does not provide it, so enqueuing during render
-	 * would raise an unregistered-dependency notice. Registering a stub is
-	 * better than declaring the notice: WP_Styles::add only fires once per
-	 * process, so a declaration would pass in whichever test rendered first
-	 * and fail in every one after it. See issue #401 for the underlying
-	 * coupling.
+	 * would raise an unregistered-dependency notice that has nothing to do
+	 * with what is under test. The underlying coupling is tracked in #401.
 	 */
 	public function set_up(): void {
 		parent::set_up();
@@ -39,15 +31,13 @@ class Test_OAuth_Consent_Template extends WP_UnitTestCase {
 		}
 	}
 
+	/**
+	 * Render the branded template and return its markup.
+	 *
+	 * @param array<string,mixed> $overrides View args to merge.
+	 * @return string Rendered HTML.
+	 */
 	private function render( array $overrides = array() ): string {
-		/*
-		 * The template renders full page chrome, and the bare test theme
-		 * ships no header.php or footer.php. Those deprecations fire on every
-		 * call, so declaring them is stable regardless of test order.
-		 */
-		$this->setExpectedDeprecated( 'Theme without header.php' );
-		$this->setExpectedDeprecated( 'Theme without footer.php' );
-
 		$args = array_merge(
 			array(
 				'client_name'      => 'Test Client',
@@ -77,55 +67,62 @@ class Test_OAuth_Consent_Template extends WP_UnitTestCase {
 		return isset( $m[1] ) ? $m[1] : '';
 	}
 
-	public function test_device_flow_renders_the_device_nonce_action(): void {
-		$html = $this->render(
-			array(
-				'nonce_action'   => 'wp_native_auth_oauth_device',
-				'is_device_flow' => true,
+	/**
+	 * Every nonce-action case, in one render pass.
+	 *
+	 * Deliberately a single test rather than four. The template renders full
+	 * page chrome, and the bare test theme ships no header.php or footer.php,
+	 * so rendering emits deprecation notices that WP_UnitTestCase fails on
+	 * unless they are declared. Those notices fire only once per process, so
+	 * splitting these into separate tests makes the declaration correct in
+	 * whichever test happens to render first and wrong in every one after it
+	 * — a test that passes or fails on execution order rather than on
+	 * behavior. One render pass, one declaration, order-independent.
+	 */
+	public function test_consent_form_renders_the_nonce_action_for_each_grant(): void {
+		$this->setExpectedDeprecated( 'Theme without header.php' );
+		$this->setExpectedDeprecated( 'Theme without footer.php' );
+
+		$device = $this->rendered_nonce(
+			$this->render(
+				array(
+					'nonce_action'   => 'wp_native_auth_oauth_device',
+					'is_device_flow' => true,
+				)
 			)
 		);
 
-		$nonce = $this->rendered_nonce( $html );
-
-		$this->assertNotSame( '', $nonce, 'the consent form rendered no nonce field' );
+		$this->assertNotSame( '', $device, 'the consent form rendered no nonce field' );
 		$this->assertSame(
 			1,
-			wp_verify_nonce( $nonce, 'wp_native_auth_oauth_device' ),
+			wp_verify_nonce( $device, 'wp_native_auth_oauth_device' ),
 			'the device flow verifies wp_native_auth_oauth_device, so the form must carry that action'
 		);
-	}
 
-	public function test_code_flow_renders_the_consent_nonce_action(): void {
-		$html = $this->render( array( 'nonce_action' => 'wp_native_auth_oauth_consent' ) );
-
-		$this->assertSame(
-			1,
-			wp_verify_nonce( $this->rendered_nonce( $html ), 'wp_native_auth_oauth_consent' )
-		);
-	}
-
-	/**
-	 * A caller that predates the argument still gets the code-flow action.
-	 */
-	public function test_missing_nonce_action_falls_back_to_the_consent_action(): void {
-		$html = $this->render();
-
-		$this->assertSame(
-			1,
-			wp_verify_nonce( $this->rendered_nonce( $html ), 'wp_native_auth_oauth_consent' )
-		);
-	}
-
-	/**
-	 * The two actions must not be interchangeable, or the test above proves
-	 * nothing.
-	 */
-	public function test_the_two_actions_are_distinct(): void {
-		$html = $this->render( array( 'nonce_action' => 'wp_native_auth_oauth_device' ) );
-
+		// Without this, the assertion above would also hold for a template
+		// that ignored the argument entirely.
 		$this->assertFalse(
-			(bool) wp_verify_nonce( $this->rendered_nonce( $html ), 'wp_native_auth_oauth_consent' ),
+			(bool) wp_verify_nonce( $device, 'wp_native_auth_oauth_consent' ),
 			'a device nonce must not validate against the consent action'
+		);
+
+		$code = $this->rendered_nonce(
+			$this->render( array( 'nonce_action' => 'wp_native_auth_oauth_consent' ) )
+		);
+
+		$this->assertSame(
+			1,
+			wp_verify_nonce( $code, 'wp_native_auth_oauth_consent' ),
+			'the authorization code flow must still get the consent action'
+		);
+
+		// A caller predating the argument keeps working.
+		$fallback = $this->rendered_nonce( $this->render() );
+
+		$this->assertSame(
+			1,
+			wp_verify_nonce( $fallback, 'wp_native_auth_oauth_consent' ),
+			'a missing nonce_action must fall back to the consent action'
 		);
 	}
 }
