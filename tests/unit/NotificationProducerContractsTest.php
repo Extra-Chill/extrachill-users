@@ -132,6 +132,14 @@ class Test_Notification_Producer_Contracts extends WP_UnitTestCase {
 	 * A registered source uses context, blog, and post identity.
 	 */
 	public function test_publish_source_replay_uses_context_blog_post_contract(): void {
+		// Deterministic queue: the managed sandbox cannot execute the real
+		// datamachine/send-email-queued ability (its queue tables are not part
+		// of the test fixture), so accept the immediate email on the seam.
+		add_filter(
+			'extrachill_users_pre_queue_publish_email',
+			static fn() => array( 'success' => true )
+		);
+
 		$post = self::factory()->post->create_and_get( array( 'post_title' => 'Published Contract' ) );
 		update_post_meta( $post->ID, '_producer_contract_submitter', $this->user_id );
 		$descriptor = array(
@@ -151,6 +159,45 @@ class Test_Notification_Producer_Contracts extends WP_UnitTestCase {
 		$this->assertSame( '1', $row['producer_owns_email'] );
 		$this->assertNotEmpty( $row['emailed_at'] );
 		$this->assertSame( 1, $this->notification_count( 'producer_contract_published' ) );
+	}
+
+	/**
+	 * A failed immediate-email admission releases the receipt for retry.
+	 */
+	public function test_publish_source_releases_receipt_when_email_cannot_queue(): void {
+		// First apply cannot queue; the retry can. Driven on the same seam as
+		// the happy path rather than by mutating the recipient email, whose
+		// update semantics are not the behavior under test.
+		$queue_succeeds = false;
+		add_filter(
+			'extrachill_users_pre_queue_publish_email',
+			static function () use ( &$queue_succeeds ) {
+				return $queue_succeeds ? array( 'success' => true ) : false;
+			}
+		);
+
+		$post = self::factory()->post->create_and_get( array( 'post_title' => 'Retry Contract' ) );
+		update_post_meta( $post->ID, '_retry_contract_submitter', $this->user_id );
+		$descriptor = array(
+			'meta_key'       => '_retry_contract_submitter',
+			'type'           => 'retry_contract_published',
+			'title_template' => 'Published: %s',
+		);
+
+		ec_users_publish_notify_apply_source(
+			'retry-contract',
+			$descriptor,
+			$post
+		);
+
+		$this->assertEmpty( get_post_meta( $post->ID, EC_USERS_PUBLISH_NOTIFIED_META_PREFIX . 'retry-contract', true ) );
+		$this->assertSame( 0, $this->notification_count( 'retry_contract_published' ) );
+
+		$queue_succeeds = true;
+		ec_users_publish_notify_apply_source( 'retry-contract', $descriptor, $post );
+
+		$this->assertNotEmpty( get_post_meta( $post->ID, EC_USERS_PUBLISH_NOTIFIED_META_PREFIX . 'retry-contract', true ) );
+		$this->assertSame( 1, $this->notification_count( 'retry_contract_published' ) );
 	}
 
 	/**
@@ -174,45 +221,7 @@ class Test_Notification_Producer_Contracts extends WP_UnitTestCase {
 		$this->assertSame( 0, $this->notification_count( 'failed_contract_published' ) );
 	}
 
-	/**
-	 * A failed immediate-email admission releases the receipt for retry.
-	 */
-	public function test_publish_source_releases_receipt_when_email_cannot_queue(): void {
-		wp_update_user(
-			array(
-				'ID'         => $this->user_id,
-				'user_email' => '',
-			)
-		);
-		$post = self::factory()->post->create_and_get( array( 'post_title' => 'Retry Contract' ) );
-		update_post_meta( $post->ID, '_retry_contract_submitter', $this->user_id );
-		$descriptor = array(
-			'meta_key'       => '_retry_contract_submitter',
-			'type'           => 'retry_contract_published',
-			'title_template' => 'Published: %s',
-		);
-
-		ec_users_publish_notify_apply_source(
-			'retry-contract',
-			$descriptor,
-			$post
-		);
-
-		$this->assertEmpty( get_post_meta( $post->ID, EC_USERS_PUBLISH_NOTIFIED_META_PREFIX . 'retry-contract', true ) );
-		$this->assertSame( 0, $this->notification_count( 'retry_contract_published' ) );
-
-		wp_update_user(
-			array(
-				'ID'         => $this->user_id,
-				'user_email' => 'retry@example.com',
-			)
-		);
-		ec_users_publish_notify_apply_source( 'retry-contract', $descriptor, $post );
-
-		$this->assertNotEmpty( get_post_meta( $post->ID, EC_USERS_PUBLISH_NOTIFIED_META_PREFIX . 'retry-contract', true ) );
-		$this->assertSame( 1, $this->notification_count( 'retry_contract_published' ) );
-	}
-
+	
 	/**
 	 * Fetch one notification contract row.
 	 *

@@ -87,11 +87,18 @@ class Test_Concert_Tracking_Validation extends WP_UnitTestCase {
 	 * @return string
 	 */
 	public function fail_tracking_mutation( string $query ): string {
-		$table = extrachill_users_concert_tracking_table_name();
-		if ( 'insert' === $this->failed_operation && str_starts_with( ltrim( $query ), "INSERT IGNORE INTO {$table}" ) ) {
+		$table     = extrachill_users_concert_tracking_table_name();
+		$statement = ltrim( $query );
+		// wpdb quotes identifiers with backticks in DELETE/UPDATE; the service's
+		// raw INSERT IGNORE does not. Accept both spellings.
+		$insert_matches = str_starts_with( $statement, "INSERT IGNORE INTO {$table}" )
+			|| str_starts_with( $statement, "INSERT IGNORE INTO `{$table}`" );
+		$delete_matches = str_starts_with( $statement, "DELETE FROM {$table}" )
+			|| str_starts_with( $statement, "DELETE FROM `{$table}`" );
+		if ( 'insert' === $this->failed_operation && $insert_matches ) {
 			return 'INSERT INTO ec_missing_attendance_table (id) VALUES (1)';
 		}
-		if ( 'delete' === $this->failed_operation && str_starts_with( ltrim( $query ), "DELETE FROM {$table}" ) ) {
+		if ( 'delete' === $this->failed_operation && $delete_matches ) {
 			return 'DELETE FROM ec_missing_attendance_table WHERE id = 1';
 		}
 		return $query;
@@ -219,7 +226,14 @@ class Test_Concert_Tracking_Validation extends WP_UnitTestCase {
 	 * @dataProvider unpublished_status_provider
 	 */
 	public function test_rejects_unpublished_events_without_mutation( string $status ): void {
-		$event_id = $this->create_post_on_blog( $this->events_blog_id, 'data_machine_events', $status );
+		// A 'future' post requires a genuinely future date, otherwise
+		// wp_insert_post canonicalizes the status to 'publish'.
+		$event_id = $this->create_post_on_blog(
+			$this->events_blog_id,
+			'data_machine_events',
+			$status,
+			'future' === $status ? gmdate( 'Y-m-d H:i:s', time() + DAY_IN_SECONDS ) : null
+		);
 		$this->assert_rejected_without_mutation(
 			array( 'event_id' => $event_id ),
 			'event_not_published',
@@ -416,15 +430,19 @@ class Test_Concert_Tracking_Validation extends WP_UnitTestCase {
 	 * @param string $post_type Post type.
 	 * @param string $post_status Post status.
 	 */
-	private function create_post_on_blog( int $blog_id, string $post_type, string $post_status ): int {
+	private function create_post_on_blog( int $blog_id, string $post_type, string $post_status, ?string $post_date = null ): int {
 		switch_to_blog( $blog_id );
 		try {
-			return self::factory()->post->create(
-				array(
-					'post_type'   => $post_type,
-					'post_status' => $post_status,
-				)
+			$args = array(
+				'post_type'   => $post_type,
+				'post_status' => $post_status,
 			);
+			if ( null !== $post_date ) {
+				$args['post_date']     = $post_date;
+				$args['post_date_gmt'] = $post_date;
+			}
+
+			return self::factory()->post->create( $args );
 		} finally {
 			restore_current_blog();
 		}

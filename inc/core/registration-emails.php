@@ -40,6 +40,23 @@
  *               if the abilities layer is genuinely unreachable.
  */
 function extrachill_send_registration_email( array $args ) {
+	/**
+	 * Short-circuit the registration email transport.
+	 *
+	 * Return a non-null value to bypass ec_send_email() entirely and use the
+	 * returned envelope as the send result. Tests use this to substitute a
+	 * deterministic transport because PHPUnit process isolation is unavailable
+	 * in the managed CI sandbox (function stubbing cannot redefine the real
+	 * extrachill-network ec_send_email()).
+	 *
+	 * @param mixed $pre  Short-circuit envelope (array|WP_Error|null). Null to continue.
+	 * @param array $args Send arguments about to be forwarded to ec_send_email().
+	 */
+	$pre = apply_filters( 'extrachill_users_pre_send_registration_email', null, $args );
+	if ( null !== $pre ) {
+		return $pre;
+	}
+
 	if ( ! function_exists( 'ec_send_email' ) ) {
 		return array(
 			'success' => false,

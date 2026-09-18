@@ -185,13 +185,16 @@ function extrachill_users_maybe_handle_two_factor( string $identifier, string $p
 	}
 
 	// Build the validate_2fa URL with the same parameters Two Factor expects.
+	// add_query_arg() inserts new values without encoding, so the continuation
+	// must be rawurlencode()d here or its query string terminates the
+	// redirect_to value at the first & (same pattern as read-redirect.php).
 	$redirect_url = add_query_arg(
 		array(
 			'action'        => 'validate_2fa',
 			'wp-auth-id'    => $user->ID,
 			'wp-auth-nonce' => $login_nonce['key'],
 			'rememberme'    => $remember ? 1 : 0,
-			'redirect_to'   => $redirect_to ? $redirect_to : home_url(),
+			'redirect_to'   => rawurlencode( $redirect_to ? $redirect_to : home_url() ),
 		),
 		site_url( 'wp-login.php' )
 	);
