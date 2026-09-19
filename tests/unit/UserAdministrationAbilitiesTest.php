@@ -95,16 +95,30 @@ class Test_User_Administration_Abilities extends WP_UnitTestCase {
 	/**
 	 * Transition registration supplies an ability when no prior owner exists.
 	 */
+	/**
+	 * Run this plugin's user-administration registration the way core demands.
+	 *
+	 * wp_register_ability() checks doing_action( 'wp_abilities_api_init' ) and
+	 * reports incorrect usage otherwise, so the callback cannot simply be
+	 * invoked. Firing the action as-is is no better: every other registrar on
+	 * it runs again and core reports "Ability ... is already registered".
+	 *
+	 * Detaching the other callbacks first fires a real action with only the
+	 * registrar under test attached. WP_UnitTestCase backs up and restores
+	 * hooks around each test, so the detachment does not leak.
+	 */
+	private function run_registration(): void {
+		remove_all_actions( 'wp_abilities_api_init' );
+		add_action( 'wp_abilities_api_init', 'extrachill_users_register_user_administration_abilities' );
+		do_action( 'wp_abilities_api_init' );
+	}
+
 	public function test_registration_registers_absent_ability(): void {
 		wp_unregister_ability( 'extrachill/grant-lifetime-membership' );
 
 		$this->assertFalse( wp_has_ability( 'extrachill/grant-lifetime-membership' ) );
 
-		// Through the action, not the callback directly: core treats a
-		// wp_register_ability() call made outside wp_abilities_api_init as
-		// incorrect usage, which WP_UnitTestCase then fails the test over.
-		// Firing the action also exercises the same path production uses.
-		do_action( 'wp_abilities_api_init' );
+		$this->run_registration();
 
 		$this->assertTrue( wp_has_ability( 'extrachill/grant-lifetime-membership' ) );
 	}
@@ -116,7 +130,7 @@ class Test_User_Administration_Abilities extends WP_UnitTestCase {
 		$existing = wp_get_ability( 'extrachill/manage-team-member' );
 		$this->assertNotNull( $existing, 'setUp must leave an owner in place for this to mean anything' );
 
-		do_action( 'wp_abilities_api_init' );
+		$this->run_registration();
 
 		$this->assertSame( $existing, wp_get_ability( 'extrachill/manage-team-member' ) );
 	}
