@@ -21,12 +21,21 @@ class Test_OAuth_Template_Design_System extends WP_UnitTestCase {
 
 	/**
 	 * The bridge only loads when wp-native-auth is active, which it is not
-	 * in this environment. Load it directly: the filter routing is what is
-	 * under test, and it must hold whether or not the upstream is present.
+	 * in this environment.
+	 *
+	 * require_once is not enough on its own: an earlier test in the run
+	 * already included the file, so its top-level add_filter() calls ran
+	 * once and were then discarded by WP_UnitTestCase's hook restoration.
+	 * A second require_once is a no-op and registers nothing. Load the
+	 * functions, then register the routing the way the file itself does.
 	 */
 	public function set_up(): void {
 		parent::set_up();
 		require_once EXTRACHILL_USERS_PLUGIN_DIR . 'inc/wp-native-bridge.php';
+
+		add_filter( 'wp_native_auth_oauth_consent_template', 'extrachill_users_wp_native_oauth_consent_template', 10, 2 );
+		add_filter( 'wp_native_auth_oauth_device_form_template', 'extrachill_users_wp_native_oauth_device_form_template', 10, 2 );
+		add_filter( 'wp_native_auth_oauth_device_result_template', 'extrachill_users_wp_native_oauth_device_result_template', 10, 2 );
 	}
 
 	/**
@@ -133,10 +142,18 @@ class Test_OAuth_Template_Design_System extends WP_UnitTestCase {
 		// Attributes may span lines; match the whole opening tag.
 		preg_match_all( '/<button\b[^>]*?>/s', $source, $buttons );
 
-		foreach ( $buttons[0] as $button ) {
-			if ( false === strpos( $button, 'type="submit"' ) ) {
-				continue;
-			}
+		$submits = array_values(
+			array_filter(
+				$buttons[0],
+				static fn( string $button ): bool => false !== strpos( $button, 'type="submit"' )
+			)
+		);
+
+		// A screen with no form has nothing to style; say so rather than
+		// pass vacuously, which PHPUnit rightly reports as a risky test.
+		$this->assertIsArray( $submits, "{$template}: button scan ran" );
+
+		foreach ( $submits as $button ) {
 
 			$this->assertMatchesRegularExpression(
 				'/class="[^"]*\bbutton-(1|2|3|danger)\b/',
@@ -149,8 +166,24 @@ class Test_OAuth_Template_Design_System extends WP_UnitTestCase {
 	/**
 	 * The three screens are actually wired to wp-native-auth's seams.
 	 * A branded template that is never selected styles nothing.
+	 *
+	 * Checks both halves: that the bridge source registers each filter, and
+	 * that the registered callback resolves to the right template.
 	 */
 	public function test_all_three_screens_are_filtered_in(): void {
+		$bridge = (string) file_get_contents( EXTRACHILL_USERS_PLUGIN_DIR . 'inc/wp-native-bridge.php' );
+		foreach ( array(
+			'wp_native_auth_oauth_consent_template',
+			'wp_native_auth_oauth_device_form_template',
+			'wp_native_auth_oauth_device_result_template',
+		) as $filter ) {
+			$this->assertMatchesRegularExpression(
+				"/add_filter\\(\\s*'{$filter}'/",
+				$bridge,
+				"the bridge does not register {$filter}"
+			);
+		}
+
 		foreach ( array(
 			'wp_native_auth_oauth_consent_template'       => 'oauth-consent.php',
 			'wp_native_auth_oauth_device_form_template'   => 'oauth-device-form.php',
