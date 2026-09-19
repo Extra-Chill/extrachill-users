@@ -20,6 +20,16 @@
 class Test_OAuth_Template_Design_System extends WP_UnitTestCase {
 
 	/**
+	 * The bridge only loads when wp-native-auth is active, which it is not
+	 * in this environment. Load it directly: the filter routing is what is
+	 * under test, and it must hold whether or not the upstream is present.
+	 */
+	public function set_up(): void {
+		parent::set_up();
+		require_once EXTRACHILL_USERS_PLUGIN_DIR . 'inc/wp-native-bridge.php';
+	}
+
+	/**
 	 * Templates that render inside the theme and own no CSS.
 	 *
 	 * @var string[]
@@ -120,9 +130,14 @@ class Test_OAuth_Template_Design_System extends WP_UnitTestCase {
 	public function test_every_submit_button_is_styled( string $template ): void {
 		$source = (string) file_get_contents( EXTRACHILL_USERS_PLUGIN_DIR . $template );
 
-		preg_match_all( '/<button[^>]*type="submit"[^>]*>/', $source, $buttons );
+		// Attributes may span lines; match the whole opening tag.
+		preg_match_all( '/<button\b[^>]*?>/s', $source, $buttons );
 
 		foreach ( $buttons[0] as $button ) {
+			if ( false === strpos( $button, 'type="submit"' ) ) {
+				continue;
+			}
+
 			$this->assertMatchesRegularExpression(
 				'/class="[^"]*\bbutton-(1|2|3|danger)\b/',
 				$button,
