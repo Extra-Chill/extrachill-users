@@ -18,6 +18,31 @@ class Test_User_Administration_Abilities extends WP_UnitTestCase {
 		require_once dirname( __DIR__, 2 ) . '/inc/team-members/role.php';
 		require_once dirname( __DIR__, 2 ) . '/inc/lifetime-membership.php';
 		require_once dirname( __DIR__, 2 ) . '/inc/core/abilities/user-administration.php';
+
+		/*
+		 * Abilities in this plugin register into the 'extrachill-users'
+		 * category, and wp_register_ability() fails when the category is
+		 * absent. The category is registered on wp_abilities_api_categories_init,
+		 * which the test bootstrap does not fire.
+		 *
+		 * Without this the registration assertions passed or failed on test
+		 * order — green only when some earlier test happened to fire that
+		 * action first. Firing it here makes this class self-sufficient.
+		 */
+		if ( function_exists( 'wp_has_ability_category' ) && ! wp_has_ability_category( 'extrachill-users' ) ) {
+			do_action( 'wp_abilities_api_categories_init' );
+		}
+
+		/*
+		 * test_registration_does_not_replace_existing_owner asserts that a
+		 * second registration pass leaves an already-owned ability untouched,
+		 * so the ability has to exist before it runs. Firing the init action
+		 * is how it exists in production; relying on a sibling test to have
+		 * registered it first is what made this order-dependent.
+		 */
+		if ( function_exists( 'wp_has_ability' ) && ! wp_has_ability( 'extrachill/manage-team-member' ) ) {
+			do_action( 'wp_abilities_api_init' );
+		}
 	}
 
 	/**
