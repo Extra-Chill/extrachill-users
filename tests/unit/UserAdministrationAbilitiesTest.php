@@ -100,7 +100,11 @@ class Test_User_Administration_Abilities extends WP_UnitTestCase {
 
 		$this->assertFalse( wp_has_ability( 'extrachill/grant-lifetime-membership' ) );
 
-		extrachill_users_register_user_administration_abilities();
+		// Through the action, not the callback directly: core treats a
+		// wp_register_ability() call made outside wp_abilities_api_init as
+		// incorrect usage, which WP_UnitTestCase then fails the test over.
+		// Firing the action also exercises the same path production uses.
+		do_action( 'wp_abilities_api_init' );
 
 		$this->assertTrue( wp_has_ability( 'extrachill/grant-lifetime-membership' ) );
 	}
@@ -110,7 +114,10 @@ class Test_User_Administration_Abilities extends WP_UnitTestCase {
 	 */
 	public function test_registration_does_not_replace_existing_owner(): void {
 		$existing = wp_get_ability( 'extrachill/manage-team-member' );
-		extrachill_users_register_user_administration_abilities();
+		$this->assertNotNull( $existing, 'setUp must leave an owner in place for this to mean anything' );
+
+		do_action( 'wp_abilities_api_init' );
+
 		$this->assertSame( $existing, wp_get_ability( 'extrachill/manage-team-member' ) );
 	}
 }
