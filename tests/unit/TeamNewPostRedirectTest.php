@@ -29,11 +29,16 @@ class Test_Team_New_Post_Redirect extends WP_UnitTestCase {
 		require_once dirname( __DIR__, 2 ) . '/inc/team-members/role.php';
 		require_once dirname( __DIR__, 2 ) . '/inc/team-members.php';
 
-		$this->main_blog_id    = (int) ec_get_blog_id( 'main' );
+		$this->main_blog_id = (int) ec_get_blog_id( 'main' );
+
+		// Materialize the mapped Studio blog BEFORE creating the throwaway
+		// subsite, so the subsite can never be allocated Studio's ID.
+		$studio_blog_id = (int) ec_get_blog_id( 'studio' );
+		$this->ensure_blog_exists( $studio_blog_id );
+
 		$this->subsite_blog_id = self::factory()->blog->create();
 		$this->assertNotSame( $this->main_blog_id, $this->subsite_blog_id );
-
-		$this->ensure_blog_exists( (int) ec_get_blog_id( 'studio' ) );
+		$this->assertNotSame( $studio_blog_id, $this->subsite_blog_id );
 
 		$this->team_user_id  = self::factory()->user->create();
 		$this->admin_user_id = self::factory()->user->create();
@@ -57,12 +62,39 @@ class Test_Team_New_Post_Redirect extends WP_UnitTestCase {
 		parent::tearDown();
 	}
 
+	/**
+	 * Ensure a site exists at a fixed, mapped blog ID.
+	 *
+	 * Blog IDs are auto-increment and InnoDB does not roll the counter back
+	 * between tests, so "create blogs until we reach ID N" breaks as soon as
+	 * earlier tests have allocated past N. Insert the row at the exact ID
+	 * instead and initialize it like core does.
+	 */
 	private function ensure_blog_exists( int $blog_id ): void {
-		while ( ! get_blog_details( $blog_id ) ) {
-			$created = self::factory()->blog->create();
-			if ( $created > $blog_id ) {
-				$this->fail( 'Could not create expected mapped blog ID.' );
-			}
+		global $wpdb;
+
+		if ( $blog_id <= 0 || get_blog_details( $blog_id ) ) {
+			return;
+		}
+
+		$network = get_network();
+		$now     = current_time( 'mysql', true );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Test fixture must pin the mapped blog ID.
+		$wpdb->insert(
+			$wpdb->blogs,
+			array(
+				'blog_id'      => $blog_id,
+				'site_id'      => (int) $network->id,
+				'domain'       => $network->domain,
+				'path'         => '/mapped-' . $blog_id . '/',
+				'registered'   => $now,
+				'last_updated' => $now,
+			)
+		);
+		clean_blog_cache( $blog_id );
+		$initialized = wp_initialize_site( $blog_id, array( 'title' => 'Mapped ' . $blog_id ) );
+		if ( is_wp_error( $initialized ) || ! get_blog_details( $blog_id ) ) {
+			$this->fail( 'Could not create expected mapped blog ID ' . $blog_id . '.' );
 		}
 	}
 
