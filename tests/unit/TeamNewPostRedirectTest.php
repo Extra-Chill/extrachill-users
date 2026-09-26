@@ -34,7 +34,7 @@ class Test_Team_New_Post_Redirect extends WP_UnitTestCase {
 		// Materialize the mapped Studio blog BEFORE creating the throwaway
 		// subsite, so the subsite can never be allocated Studio's ID.
 		$studio_blog_id = (int) ec_get_blog_id( 'studio' );
-		$this->ensure_blog_exists( $studio_blog_id );
+		$this->assertNotFalse( get_blog_details( $studio_blog_id ), 'Mapped Studio blog fixture missing.' );
 
 		$this->subsite_blog_id = self::factory()->blog->create();
 		$this->assertNotSame( $this->main_blog_id, $this->subsite_blog_id );
@@ -70,9 +70,20 @@ class Test_Team_New_Post_Redirect extends WP_UnitTestCase {
 	 * earlier tests have allocated past N. Insert the row at the exact ID
 	 * instead and initialize it like core does.
 	 */
-	private function ensure_blog_exists( int $blog_id ): void {
+	/**
+	 * Create the mapped Studio blog once per class. Fixtures created here are
+	 * committed by the WP test framework, so the row and its tables stay
+	 * consistent across tests instead of rolling back per test.
+	 */
+	public static function wpSetUpBeforeClass( $factory ): void {
+		require_once ABSPATH . WPINC . '/class-wp-admin-bar.php';
+		self::ensure_blog_exists( (int) ec_get_blog_id( 'studio' ) );
+	}
+
+	private static function ensure_blog_exists( int $blog_id ): void {
 		global $wpdb;
 
+		clean_blog_cache( $blog_id );
 		if ( $blog_id <= 0 || get_blog_details( $blog_id ) ) {
 			return;
 		}
@@ -93,8 +104,11 @@ class Test_Team_New_Post_Redirect extends WP_UnitTestCase {
 		);
 		clean_blog_cache( $blog_id );
 		$initialized = wp_initialize_site( $blog_id, array( 'title' => 'Mapped ' . $blog_id ) );
-		if ( is_wp_error( $initialized ) || ! get_blog_details( $blog_id ) ) {
-			$this->fail( 'Could not create expected mapped blog ID ' . $blog_id . '.' );
+		if ( is_wp_error( $initialized ) && 'site_already_initialized' !== $initialized->get_error_code() ) {
+			throw new RuntimeException( 'Could not initialize mapped blog ID ' . $blog_id . ': ' . $initialized->get_error_message() );
+		}
+		if ( ! get_blog_details( $blog_id ) ) {
+			throw new RuntimeException( 'Could not create expected mapped blog ID ' . $blog_id . '.' );
 		}
 	}
 
