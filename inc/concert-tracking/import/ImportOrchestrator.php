@@ -194,8 +194,9 @@ final class ImportOrchestrator {
 
 		$events      = isset( $result['events'] ) && is_array( $result['events'] ) ? $result['events'] : array();
 		$total_pages = isset( $result['total_pages'] ) ? max( 1, (int) $result['total_pages'] ) : $page;
-		$matcher     = new EventMatcher();
-		$events_blog = $matcher->blog_id();
+		$upserter    = new CanonicalEventUpserter();
+		$events_blog = function_exists( 'ec_get_blog_id' ) ? (int) ec_get_blog_id( 'events' ) : 7;
+		$events_blog = (int) apply_filters( 'extrachill_users_events_blog_id', $events_blog );
 		$source_slug = (string) $run['source_slug'];
 
 		$seen             = 0;
@@ -206,89 +207,44 @@ final class ImportOrchestrator {
 		$attendance_error = null;
 		$rejected_event   = null;
 
-		// Suppress per-event IndexNow pings for the duration of this import
-		// batch. Each created event would otherwise trigger a synchronous
-		// outbound IndexNow POST (twice — Data Machine + extrachill-seo both
-		// honor this canonical filter), asking search engines to crawl
-		// potentially thousands of historical pages mid-import. The sitemap
-		// still advertises them on the normal crawl cadence.
-		$suppress_indexnow = static function (): bool {
-			return true;
-		};
-		add_filter( 'datamachine_indexnow_skip_auto_submit', $suppress_indexnow );
-
-		// All event resolution + creation happens in the events-blog context.
-		// Switching once per page keeps the work atomic and avoids paying the
-		// switch_to_blog cost per-event. The EventMatcher will detect that we
-		// are already in the events blog and skip its own switch.
-		$switched     = false;
-		$current_blog = get_current_blog_id();
-		if ( $current_blog !== $events_blog ) {
-			switch_to_blog( $events_blog );
-			$switched = true;
-		}
-
-		try {
-			foreach ( $events as $external ) {
-				if ( ! $external instanceof ExternalEvent ) {
-					++$skipped;
-					continue;
-				}
-				++$seen;
-
-				if ( ! $external->is_matchable() ) {
-					++$skipped;
-					continue;
-				}
-
-				// 1. external_id idempotency check. The source's stable
-				// identifier is more authoritative than name similarity, so
-				// we look here BEFORE running the similarity matcher.
-				// Re-imports for previously-created events become a no-op.
-				$resolved_id = EventCreator::find_by_external_id( $source_slug, $external->source_id );
-
-				// 2. Similarity match against existing events on the same date.
-				if ( null === $resolved_id ) {
-					$resolved_id = $matcher->match( $external );
-				}
-
-				$was_created = false;
-
-				// 3. Fall through to create. Skipping is data loss — every
-				// other event-import path on the platform creates events,
-				// and we already have the user's confirmation to bring this
-				// history in.
-				if ( null === $resolved_id ) {
-					$resolved_id = EventCreator::create( $external, $source_slug );
-					if ( null === $resolved_id ) {
-						// Truly couldn't create (malformed payload, insert
-						// failure). Count as unmatched so it shows up in the
-						// run summary instead of being lost in skipped.
-						++$unmatched;
-						continue;
-					}
-					$was_created = true;
-				}
-
-				$mark_result = ec_users_mark_event( (int) $run['user_id'], $resolved_id, $events_blog );
-				if ( is_wp_error( $mark_result ) ) {
-					++$unmatched;
-					$attendance_error = $mark_result;
-					$rejected_event   = $external;
-					break;
-				}
-
-				if ( $was_created ) {
-					++$created;
-				} else {
-					++$matched;
-				}
+		foreach ( $events as $external ) {
+			if ( ! $external instanceof ExternalEvent ) {
+				++$skipped;
+				continue;
 			}
-		} finally {
-			if ( $switched ) {
-				restore_current_blog();
+			++$seen;
+
+			if ( '' === trim( $external->source_id ) ) {
+				++$unmatched;
+				self::log_event_issue( 'warning', 'Concert import event missing provider source ID', $source_slug, $external );
+				continue;
 			}
-			remove_filter( 'datamachine_indexnow_skip_auto_submit', $suppress_indexnow );
+			if ( ! $external->is_matchable() ) {
+				++$skipped;
+				continue;
+			}
+
+			$upsert_result = $upserter->upsert( $external, $source_slug, $run );
+			if ( is_wp_error( $upsert_result ) ) {
+				++$unmatched;
+				self::log_event_issue( 'error', 'Concert import canonical event write failed', $source_slug, $external, $upsert_result );
+				continue;
+			}
+			$resolved_id = (int) $upsert_result['event_id'];
+
+			$mark_result = ec_users_mark_event( (int) $run['user_id'], $resolved_id, $events_blog );
+			if ( is_wp_error( $mark_result ) ) {
+				++$unmatched;
+				$attendance_error = $mark_result;
+				$rejected_event   = $external;
+				break;
+			}
+
+			if ( 'created' === $upsert_result['action'] ) {
+				++$created;
+			} else {
+				++$matched;
+			}
 		}
 
 		self::increment_counters( $run_id, $seen, $matched, $created, $unmatched, $skipped );
@@ -333,6 +289,28 @@ final class ImportOrchestrator {
 		$per_sec = isset( $rate['requests_per_second'] ) ? (float) $rate['requests_per_second'] : 0.0;
 		$delay   = $per_sec > 0 ? (int) max( 1, ceil( 1.0 / $per_sec ) ) : 1;
 		self::reschedule( $run_id, $delay );
+	}
+
+	/**
+	 * Emit a bounded per-record import diagnostic.
+	 *
+	 * @param string         $level       Log level.
+	 * @param string         $message     Stable diagnostic message.
+	 * @param string         $source_slug Provider source slug.
+	 * @param ExternalEvent  $event       Provider event.
+	 * @param \WP_Error|null $error       Optional canonical write error.
+	 */
+	private static function log_event_issue( string $level, string $message, string $source_slug, ExternalEvent $event, ?\WP_Error $error = null ): void {
+		$context = array(
+			'source_slug' => substr( $source_slug, 0, 64 ),
+			'source_id'   => substr( $event->source_id, 0, 128 ),
+			'event'       => substr( $event->label(), 0, 300 ),
+		);
+		if ( $error ) {
+			$context['error_code']    = substr( (string) $error->get_error_code(), 0, 128 );
+			$context['error_message'] = substr( $error->get_error_message(), 0, 500 );
+		}
+		do_action( 'datamachine_log', $level, $message, $context );
 	}
 
 	// ─── Source registry ──────────────────────────────────────────────
