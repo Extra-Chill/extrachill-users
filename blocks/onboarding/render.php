@@ -99,6 +99,27 @@ ec_users_emit_onboarding_viewed_once( $user_id );
 			</div>
 
 			<?php
+			$join_intents = $from_join && function_exists( 'ec_users_get_onboarding_join_intents' ) ? ec_users_get_onboarding_join_intents() : array();
+			?>
+			<?php if ( $join_intents ) : ?>
+				<?php
+				/*
+				 * /join with registered intents: one question, "what are you here
+				 * for?", with the first choice pre-selected. Each intent declares
+				 * the roles it implies, so there are no role checkboxes to tick.
+				 */
+				?>
+				<fieldset class="onboarding-field onboarding-join-intents">
+					<legend id="onboarding-role-prompt"><?php esc_html_e( 'What\'s your Link Page for?', 'extrachill-users' ); ?></legend>
+					<?php foreach ( $join_intents as $index => $join_intent ) : ?>
+						<label class="onboarding-checkbox-label">
+							<input type="radio" name="join_intent" value="<?php echo esc_attr( $join_intent['id'] ); ?>"<?php checked( 0 === $index ); ?>>
+							<span><?php echo esc_html( $join_intent['label'] ); ?></span>
+						</label>
+					<?php endforeach; ?>
+				</fieldset>
+			<?php else : ?>
+			<?php
 			/*
 			 * On /join the role choice is required, so it leads with the instruction
 			 * and omits the pre-checked, disabled "I love music" box. That box read as
@@ -129,6 +150,7 @@ ec_users_emit_onboarding_viewed_once( $user_id );
 					<span><?php esc_html_e( 'I work in the music industry', 'extrachill-users' ); ?></span>
 				</label>
 			</div>
+			<?php endif; ?>
 
 			<div class="onboarding-error" id="onboarding-error" style="display: none;"></div>
 
