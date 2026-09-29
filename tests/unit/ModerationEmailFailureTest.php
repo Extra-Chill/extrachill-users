@@ -1,9 +1,6 @@
 <?php
 /**
  * Regression coverage for moderation email queue failures.
- *
- * @runTestsInSeparateProcesses
- * @preserveGlobalState disabled
  */
 
 class Test_Moderation_Email_Failure extends WP_UnitTestCase {

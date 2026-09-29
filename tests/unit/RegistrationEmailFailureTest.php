@@ -14,9 +14,6 @@
  * These tests run in separate processes so we can define our own
  * ec_send_email() stub (the real one lives in extrachill-network and is
  * unavailable in the unit-test bootstrap).
- *
- * @runTestsInSeparateProcesses
- * @preserveGlobalState disabled
  */
 
 class Test_Registration_Email_Failure extends WP_UnitTestCase {
