@@ -49,6 +49,22 @@ class Test_Password_Reset_Email_Failure extends WP_UnitTestCase {
 		require_once dirname( __DIR__, 2 ) . '/inc/core/registration-emails.php';
 		require_once dirname( __DIR__, 2 ) . '/inc/auth/password-reset.php';
 
+		// Intercept the mail ability itself (core's documented test-mocking seam),
+		// so the result is controlled whether ec_send_email() is the real
+		// extrachill-network wrapper or the fallback stub below.
+		add_filter(
+			'wp_pre_execute_ability',
+			static function ( $pre, $name, $input ) {
+				if ( 'datamachine/send-email' !== $name ) {
+					return $pre;
+				}
+				$GLOBALS['test_ec_send_email_last_args'] = $input;
+				return $GLOBALS['test_ec_send_email_result'] ?? array( 'success' => true );
+			},
+			10,
+			3
+		);
+
 		if ( ! function_exists( 'ec_send_email' ) ) {
 			eval(
 				'function ec_send_email( array $args ) {' .

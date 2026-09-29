@@ -201,7 +201,7 @@ function ec_users_review_notify_deliver( int $blog_id, int $post_id, int $attemp
 		),
 	);
 
-	$queue  = static function () use ( $queue_args ) {
+	$queue = static function () use ( $queue_args ) {
 		return ec_send_email_queued( $queue_args );
 	};
 	try {
