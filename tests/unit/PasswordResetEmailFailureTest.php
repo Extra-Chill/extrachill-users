@@ -12,7 +12,7 @@
  * documented array envelope — and `! empty( $result['success'] )` fataled.
  *
  * The fix routes the send through extrachill_send_registration_email()
- * (run_as_authenticated seam, same as #110) and guards the envelope with
+ * (ec_send_email() sends as the system) and guards the envelope with
  * is_wp_error()/is_array() before indexing.
  *
  * These tests run in separate processes so we can define our own

@@ -206,7 +206,7 @@ function ec_users_review_notify_deliver( int $blog_id, int $post_id, int $attemp
 	};
 	$helper = '\\DataMachine\\Abilities\\PermissionHelper';
 	try {
-		$result = class_exists( $helper ) ? $helper::run_as_authenticated( $queue ) : $queue();
+		$result = $queue();
 	} catch ( \Throwable $exception ) {
 		$result = new \WP_Error( 'queue_exception', $exception->getMessage() );
 	}
