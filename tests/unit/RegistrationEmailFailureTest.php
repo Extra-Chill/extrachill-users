@@ -1,4 +1,5 @@
 <?php
+// control run: select email tests under current deps
 /**
  * Unit tests for registration-email failure handling.
  *

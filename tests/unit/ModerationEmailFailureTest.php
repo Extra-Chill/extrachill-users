@@ -1,4 +1,5 @@
 <?php
+// control run: select email tests under current deps
 /**
  * Regression coverage for moderation email queue failures.
  *
