@@ -114,6 +114,11 @@ function extrachill_log_email_failure( $context, $user_id, $recipient, $subject,
 		} elseif ( ! empty( $result['message'] ) ) {
 			$error = (string) $result['message'];
 		}
+		// ec_send_email() normalizes a refused ability call into the array
+		// envelope; keep its code so the log still names the real failure.
+		if ( ! empty( $result['error_code'] ) ) {
+			$error = sprintf( '%s: %s', (string) $result['error_code'], $error );
+		}
 	} elseif ( is_wp_error( $result ) ) {
 		// The send-email ability returns a WP_Error (not the array envelope) when
 		// the inner permission/validation check fails. Surface the REAL code +

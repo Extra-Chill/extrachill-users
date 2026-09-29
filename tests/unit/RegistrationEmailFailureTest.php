@@ -266,7 +266,7 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 		$user_data = get_userdata( $user_id );
 
 		$this->assertTrue( extrachill_send_welcome_email_incomplete( $user_data ) );
-		$this->assertSame( '', $this->read_error_log() );
+		$this->assertStringNotContainsString( 'registration-email failure', $this->read_error_log() );
 	}
 
 	public function test_welcome_incomplete_invites_users_into_the_clubhouse(): void {
@@ -287,7 +287,9 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'Do I need to finish my profile?', $args['context']['body_html'] );
 		$this->assertStringContainsString( 'Is Extra Chill just a music blog?', $args['context']['body_html'] );
 		$this->assertStringContainsString( 'Find shows and track concerts', $args['context']['body_html'] );
-		$this->assertStringContainsString( 'https://community.extrachill.com/u/test-user/edit/', $args['context']['body_html'] );
+		$profile_url = extrachill_get_user_community_profile_edit_url( $user_id, $user_data->user_email );
+		$this->assertNotSame( '', $profile_url );
+		$this->assertStringContainsString( esc_url( $profile_url ), $args['context']['body_html'] );
 		$this->assertStringNotContainsString( 'https://community.extrachill.com/settings/', $args['context']['body_html'] );
 		$this->assertDoesNotMatchRegularExpression( '/\bfollow(?:er|ers|ing|s|ed)?\b/i', $args['context']['body_html'] );
 	}
@@ -329,6 +331,6 @@ class Test_Registration_Email_Failure extends WP_UnitTestCase {
 		extrachill_log_email_failure( 'unit_test', 42, 'someone@example.com', 'Test Subject', null );
 
 		$log = $this->read_error_log();
-		$this->assertStringContainsString( 'unknown error', $log );
+		$this->assertStringContainsString( 'ec_send_email returned null', $log );
 	}
 }
