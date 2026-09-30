@@ -385,7 +385,7 @@ function ec_users_render_event_attendees( int $event_id, int $blog_id ) {
 		array_filter(
 			$attendees,
 			static function ( $attendee ) {
-				return '' !== (string) ( $attendee['avatar_url'] ?? '' );
+				return '' !== (string) $attendee['avatar_url'];
 			}
 		)
 	);
