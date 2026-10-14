@@ -68,9 +68,7 @@ function extrachill_users_run_activation() {
 	require_once EXTRACHILL_USERS_PLUGIN_DIR . 'inc/artist-dispatch-role.php';
 	ec_users_register_artist_dispatch_role_on_main();
 
-	if ( ! wp_next_scheduled( 'extrachill_welcome_email_fallback' ) ) {
-		wp_schedule_event( time(), 'hourly', 'extrachill_welcome_email_fallback' );
-	}
+	extrachill_users_maybe_schedule_welcome_email_fallback();
 }
 
 /**
@@ -94,8 +92,10 @@ function extrachill_users_run_deactivation() {
 /**
  * Cron callback for sending welcome emails to users who never completed onboarding.
  *
- * Finds users registered over 1 hour ago who haven't completed onboarding
- * and haven't received a welcome email yet.
+ * Finds users registered over 1 hour ago but within the last 7 days who
+ * haven't completed onboarding and haven't received a welcome email yet. The
+ * 7-day lower bound (#454) keeps a re-enabled fallback from backfilling the
+ * months-old accounts that piled up while the event was unscheduled.
  */
 function extrachill_welcome_email_fallback_callback() {
 	$users = get_users(
@@ -120,6 +120,7 @@ function extrachill_welcome_email_fallback_callback() {
 			),
 			'date_query' => array(
 				array(
+					'after'  => '7 days ago',
 					'before' => '1 hour ago',
 				),
 			),
@@ -142,6 +143,55 @@ function extrachill_welcome_email_fallback_callback() {
 }
 
 add_action( 'extrachill_welcome_email_fallback', 'extrachill_welcome_email_fallback_callback' );
+
+/**
+ * Ensure the welcome-email fallback cron is scheduled (self-healing).
+ *
+ * The event was historically scheduled only from the activation hook, so once
+ * it fell off the cron array nothing re-scheduled it (#454) and users who
+ * signed up without finishing onboarding silently stopped receiving welcome
+ * emails. Re-register on init on the site that owns the event; non-owner
+ * sites clear any stray schedule so the hourly sweep fires exactly once
+ * network-wide.
+ */
+function extrachill_users_maybe_schedule_welcome_email_fallback() {
+	if ( ! extrachill_users_welcome_email_fallback_is_owner_site() ) {
+		if ( wp_next_scheduled( 'extrachill_welcome_email_fallback' ) ) {
+			wp_clear_scheduled_hook( 'extrachill_welcome_email_fallback' );
+		}
+		return;
+	}
+
+	if ( ! wp_next_scheduled( 'extrachill_welcome_email_fallback' ) ) {
+		wp_schedule_event( time(), 'hourly', 'extrachill_welcome_email_fallback' );
+	}
+}
+add_action( 'init', 'extrachill_users_maybe_schedule_welcome_email_fallback' );
+
+/**
+ * Is the current site the one that owns the welcome-email fallback cron?
+ *
+ * Pins ownership to the community site — the home of registration and
+ * onboarding — falling back to the main blog when the network site resolver
+ * is unavailable, then to the current site so scheduling still converges in
+ * single-site and test contexts.
+ *
+ * @return bool
+ */
+function extrachill_users_welcome_email_fallback_is_owner_site() {
+	$owner = 0;
+
+	if ( function_exists( 'ec_get_blog_id' ) ) {
+		$community = (int) ec_get_blog_id( 'community' );
+		$owner     = $community > 0 ? $community : (int) ec_get_blog_id( 'main' );
+	}
+
+	if ( $owner <= 0 ) {
+		$owner = (int) get_current_blog_id();
+	}
+
+	return (int) get_current_blog_id() === $owner;
+}
 
 /**
  * Create login page on all network sites.

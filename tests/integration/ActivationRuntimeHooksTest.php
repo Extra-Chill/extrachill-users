@@ -21,12 +21,13 @@ class Test_Activation_Runtime_Hooks extends WP_UnitTestCase {
 	 */
 	public function runtime_hooks(): array {
 		return array(
-			'new site login page'    => array( 'wp_initialize_site', 'extrachill_users_on_new_site' ),
-			'welcome email fallback' => array( 'extrachill_welcome_email_fallback', 'extrachill_welcome_email_fallback_callback' ),
-			'login page self-heal'   => array( 'admin_init', 'extrachill_users_maybe_create_login_page' ),
-			'concert tracking table' => array( 'admin_init', 'extrachill_users_maybe_create_concert_tracking_table' ),
-			'concert import runs'    => array( 'admin_init', 'extrachill_users_maybe_create_concert_import_runs_table' ),
-			'onboarding page'        => array( 'admin_init', 'extrachill_users_maybe_create_onboarding_page' ),
+			'new site login page'     => array( 'wp_initialize_site', 'extrachill_users_on_new_site' ),
+			'welcome email fallback'  => array( 'extrachill_welcome_email_fallback', 'extrachill_welcome_email_fallback_callback' ),
+			'welcome fallback cron'   => array( 'init', 'extrachill_users_maybe_schedule_welcome_email_fallback' ),
+			'login page self-heal'    => array( 'admin_init', 'extrachill_users_maybe_create_login_page' ),
+			'concert tracking table'  => array( 'admin_init', 'extrachill_users_maybe_create_concert_tracking_table' ),
+			'concert import runs'     => array( 'admin_init', 'extrachill_users_maybe_create_concert_import_runs_table' ),
+			'onboarding page'         => array( 'admin_init', 'extrachill_users_maybe_create_onboarding_page' ),
 		);
 	}
 
