@@ -68,21 +68,32 @@ class Test_Attendance_Funnel_Analytics extends WP_UnitTestCase {
 		if ( wp_has_ability( 'extrachill/track-analytics-event' ) ) {
 			$this->markTestSkipped( 'The real analytics ability is registered; this test captures emits through a fixture ability.' );
 		}
-		wp_register_ability(
-			'extrachill/track-analytics-event',
-			array(
-				'label'               => 'Test analytics',
-				'description'         => 'Captures attendance funnel events.',
-				'category'            => 'extrachill-users',
-				'input_schema'        => array( 'type' => 'object' ),
-				'output_schema'       => array( 'type' => 'integer' ),
-				'permission_callback' => '__return_true',
-				'execute_callback'    => static function ( $input ) {
-					$GLOBALS['ec_attendance_funnel_events'][] = $input;
-					return count( $GLOBALS['ec_attendance_funnel_events'] );
-				},
-			)
+		// wp_register_ability() only accepts registrations during a real
+		// wp_abilities_api_init. Detach the other registrars first so they do
+		// not re-register (see UserAdministrationAbilitiesTest::run_registration);
+		// WP_UnitTestCase restores hooks after each test.
+		remove_all_actions( 'wp_abilities_api_init' );
+		add_action(
+			'wp_abilities_api_init',
+			static function () {
+				wp_register_ability(
+					'extrachill/track-analytics-event',
+					array(
+						'label'               => 'Test analytics',
+						'description'         => 'Captures attendance funnel events.',
+						'category'            => 'extrachill-users',
+						'input_schema'        => array( 'type' => 'object' ),
+						'output_schema'       => array( 'type' => 'integer' ),
+						'permission_callback' => '__return_true',
+						'execute_callback'    => static function ( $input ) {
+							$GLOBALS['ec_attendance_funnel_events'][] = $input;
+							return count( $GLOBALS['ec_attendance_funnel_events'] );
+						},
+					)
+				);
+			}
 		);
+		do_action( 'wp_abilities_api_init' );
 		$this->registered_fake_analytics = true;
 	}
 
