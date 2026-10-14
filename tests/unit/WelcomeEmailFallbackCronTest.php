@@ -65,12 +65,17 @@ class Test_Welcome_Email_Fallback_Cron extends WP_UnitTestCase {
 	 * @return int User ID.
 	 */
 	private function make_stuck_signup( int $seconds_ago ): int {
-		return self::factory()->user->create(
+		$user_id = self::factory()->user->create(
 			array(
 				'user_email'      => 'fallback-' . wp_generate_password( 8, false ) . '@example.com',
 				'user_registered' => gmdate( 'Y-m-d H:i:s', time() - $seconds_ago ),
 			)
 		);
+
+		update_user_meta( $user_id, 'onboarding_completed', '0' );
+		update_user_meta( $user_id, 'welcome_email_sent', '0' );
+
+		return $user_id;
 	}
 
 	/**
@@ -79,7 +84,6 @@ class Test_Welcome_Email_Fallback_Cron extends WP_UnitTestCase {
 	 * @param int $user_id User ID.
 	 */
 	private function mark_already_sent( int $user_id ): void {
-		update_user_meta( $user_id, 'onboarding_completed', '0' );
 		update_user_meta( $user_id, 'welcome_email_sent', '1' );
 	}
 
