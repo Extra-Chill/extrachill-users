@@ -149,7 +149,7 @@ class Test_Artist_Access_Abilities extends WP_UnitTestCase {
 	 *
 	 * Defining WP_CLI in-process would grant every later test in the run
 	 * administrative access, and the WP Codebox runtime cannot spawn PHPUnit
-	 * child processes (@runInSeparateProcess ends unexpectedly there). Assert
+	 * child processes (separate-process isolation ends unexpectedly there). Assert
 	 * the CLI branch only where the runtime already is WP-CLI.
 	 */
 	public function test_explicit_wp_cli_context_is_authorized(): void {
