@@ -55,10 +55,21 @@ class Test_Artist_Access_Abilities extends WP_UnitTestCase {
 	 * Subscribers cannot execute any administrative ability.
 	 */
 	public function test_registered_administrative_abilities_deny_subscribers(): void {
+		$target_id = self::factory()->user->create();
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
 
-		foreach ( array( 'list-artist-access-requests', 'approve-artist-access', 'reject-artist-access' ) as $name ) {
-			$result = wp_get_ability( 'extrachill/' . $name )->execute( array() );
+		// WP_Ability::execute() validates input before checking permissions,
+		// so each call carries schema-valid input to reach the permission gate.
+		$inputs = array(
+			'list-artist-access-requests' => array(),
+			'approve-artist-access'       => array(
+				'user_id' => $target_id,
+				'type'    => 'artist',
+			),
+			'reject-artist-access'        => array( 'user_id' => $target_id ),
+		);
+		foreach ( $inputs as $name => $input ) {
+			$result = wp_get_ability( 'extrachill/' . $name )->execute( $input );
 			$this->assertWPError( $result );
 			$this->assertSame( 'ability_invalid_permissions', $result->get_error_code() );
 		}

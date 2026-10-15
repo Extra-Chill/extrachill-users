@@ -386,7 +386,14 @@ class Test_Artist_Dispatch_Access extends WP_UnitTestCase {
 		}
 		$this->assertSame( array(), ec_users_get_artist_dispatch_event_payload( 0, $request_id ) );
 		$this->assertSame( array( 'user_id' => 12 ), ec_users_get_artist_dispatch_event_payload( 12, 'not-a-uuid' ) );
-		$this->assertSame( array( 'user_id' => 12 ), ec_users_get_artist_dispatch_event_payload( 12, $request_id, 'free-text' ) );
+		// An unknown cohort is dropped; the valid request ID is still carried.
+		$this->assertSame(
+			array(
+				'user_id'    => 12,
+				'request_id' => $request_id,
+			),
+			ec_users_get_artist_dispatch_event_payload( 12, $request_id, 'free-text' )
+		);
 
 		$user_id = self::factory()->user->create();
 		$state   = array(
