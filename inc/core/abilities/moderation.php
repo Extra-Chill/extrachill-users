@@ -20,7 +20,7 @@ add_action( 'wp_abilities_api_init', 'extrachill_users_register_moderation_abili
  * @return bool
  */
 function extrachill_users_can_moderate_users() {
-	$allowed = ( defined( 'WP_CLI' ) && WP_CLI ) || current_user_can( 'manage_network_users' );
+	$allowed = ( defined( 'WP_CLI' ) && constant( 'WP_CLI' ) ) || current_user_can( 'manage_network_users' );
 
 	/**
 	 * Filter whether the current context may read or apply user moderation.
