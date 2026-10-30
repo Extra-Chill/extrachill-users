@@ -87,6 +87,12 @@ function ec_users_get_team_role_caps() {
 		// Data Machine owns the capability; flow/agent/settings admin
 		// caps (datamachine_manage_*) are deliberately NOT granted.
 		'datamachine_render_images' => true,
+
+		// Reading and appending the agent's daily memory, so team members
+		// can log and recall work through the agent (e.g. closing out a
+		// giveaway). Data Machine owns the capability; deleting daily
+		// memory stays behind its admin caps.
+		'datamachine_daily_memory'  => true,
 	);
 }
 

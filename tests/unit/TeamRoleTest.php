@@ -61,6 +61,26 @@ class Test_Team_Role extends WP_UnitTestCase {
 		$this->assertTrue( $caps['datamachine_render_images'] );
 	}
 
+	public function test_role_caps_grant_datamachine_daily_memory(): void {
+		$caps = ec_users_get_team_role_caps();
+		$this->assertArrayHasKey(
+			'datamachine_daily_memory',
+			$caps,
+			'Team role must grant datamachine_daily_memory so members can log to agent daily memory (#482).'
+		);
+		$this->assertTrue( $caps['datamachine_daily_memory'] );
+	}
+
+	public function test_team_role_holder_has_daily_memory_cap(): void {
+		ec_users_register_team_role();
+
+		$user_id = self::factory()->user->create();
+		$user    = new WP_User( $user_id );
+		$user->add_role( EC_USERS_TEAM_ROLE );
+
+		$this->assertTrue( user_can( $user_id, 'datamachine_daily_memory' ) );
+	}
+
 	public function test_role_caps_do_not_grant_datamachine_admin_caps(): void {
 		$caps = ec_users_get_team_role_caps();
 		foreach (
